@@ -8,14 +8,6 @@ dotenv.config();
 const PORT = process.env.PORT || 5000;
 const MONGO_URL = process.env.MONGO_URL;
 
-// MongoDB connection options
-const mongooseOptions = {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  retryWrites: true,
-  w: 'majority'
-};
-
 // Connect to MongoDB
 const connectDB = async () => {
   try {
@@ -25,7 +17,8 @@ const connectDB = async () => {
       throw new Error('MONGO_URL is not defined in environment variables');
     }
 
-    await mongoose.connect(MONGO_URL, mongooseOptions);
+    // Remove deprecated options - use modern connection
+    await mongoose.connect(MONGO_URL);
     console.log("✅ MongoDB connected successfully");
     
     // Start the server only after successful DB connection
