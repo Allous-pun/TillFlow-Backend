@@ -1,0 +1,38 @@
+# Node modules
+/node_modules
+
+# Build output (TypeScript compiled files)
+dist/
+build/
+
+# Local env files (💥 NEVER commit to GitHub)
+.env
+.env.local
+.env.production
+.env.development
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# Editor files
+.vscode/
+.idea/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Temporary files
+tmp/
+temp/
+
+# Optional: ignore uploads or temporary storage dirs if any
+/uploads/
