@@ -162,21 +162,19 @@ const generateVerificationOptions = async (user) => {
     manualEntryCode: totpSecret.base32
   };
 
-  // Generate security questions options (just questions, answers will be set later)
+  // Generate security questions options
   const securityQuestionTexts = SecurityChallengeService.generateSecurityQuestions();
   options.securityQuestions = securityQuestionTexts;
 
   // Generate math challenge
   options.mathChallenge = ChallengeUtils.generateMathChallenge();
 
-  // Store initial security data - FIXED: only store questions without answers
+  // Store initial security data - ONLY store TOTP secret initially
+  // Don't store security questions until user provides answers
   await UserSecurity.create({
     userId: user._id,
     totpSecret: totpSecret.base32,
-    securityQuestions: securityQuestionTexts.map(question => ({ 
-      question: question,
-      answer: "" // Empty initially, will be set during verification
-    }))
+    securityQuestions: [] // Empty array initially - will be set during verification
   });
 
   return options;
@@ -260,12 +258,21 @@ export const verifyWithTOTP = async (req, res) => {
 // Setup security questions
 export const setupSecurityQuestions = async (req, res) => {
   try {
-    const { userId, questionsWithAnswers, mathChallengeAnswer } = req.body;
+    const { userId, questionsWithAnswers } = req.body;
 
     if (!userId || !questionsWithAnswers) {
       return res.status(400).json({ 
         success: false,
         message: "User ID and security questions are required" 
+      });
+    }
+
+    // Validate that all questions have answers
+    const hasEmptyAnswers = questionsWithAnswers.some(q => !q.answer || q.answer.trim() === '');
+    if (hasEmptyAnswers) {
+      return res.status(400).json({ 
+        success: false,
+        message: "All security questions must have answers" 
       });
     }
 
@@ -286,7 +293,10 @@ export const setupSecurityQuestions = async (req, res) => {
     }
 
     // Update security questions with answers
-    userSecurity.securityQuestions = questionsWithAnswers;
+    userSecurity.securityQuestions = questionsWithAnswers.map(q => ({
+      question: q.question,
+      answer: q.answer.trim() // Ensure answers are trimmed
+    }));
     userSecurity.securityQuestionsSet = true;
     userSecurity.preferredVerificationMethod = 'security_questions';
     await userSecurity.save();
@@ -309,7 +319,16 @@ export const setupSecurityQuestions = async (req, res) => {
     });
   } catch (error) {
     console.error('Security questions setup error:', error);
-    res.status(400).json({ 
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        success: false,
+        message: messages.join(', ') 
+      });
+    }
+    
+    res.status(500).json({ 
       success: false,
       message: error.message 
     });
