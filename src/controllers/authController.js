@@ -70,6 +70,79 @@ export const registerUser = async (req, res) => {
   }
 };
 
+// Admin Registration - Creates admin account directly (bypasses verification)
+export const registerAdmin = async (req, res) => {
+  try {
+    const { email, password, fullName, phoneNumber, adminSecret } = req.body;
+
+    // Verify admin secret
+    if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
+      return res.status(403).json({ 
+        success: false,
+        message: "Invalid admin secret" 
+      });
+    }
+
+    // Check if user exists
+    const existingUser = await User.findOne({ 
+      $or: [{ email }, { phoneNumber }] 
+    });
+    
+    if (existingUser) {
+      if (existingUser.email === email) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Email already registered" 
+        });
+      }
+      if (existingUser.phoneNumber === phoneNumber) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Phone number already registered" 
+        });
+      }
+    }
+
+    // Create admin user (pre-verified, no TOTP required)
+    const user = await User.create({ 
+      email, 
+      password, 
+      fullName, 
+      phoneNumber,
+      role: 'admin',
+      verified: true // Skip verification for admin
+    });
+
+    res.status(201).json({ 
+      success: true,
+      message: "Admin user created successfully", 
+      user: {
+        id: user._id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        verified: user.verified
+      },
+      token: generateToken(user._id, user.role) // Auto-login after registration
+    });
+  } catch (error) {
+    console.error('Admin registration error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        success: false,
+        message: messages.join(', ') 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      message: "Server error during admin registration" 
+    });
+  }
+};
+
 // Generate verification options for user
 const generateVerificationOptions = async (user) => {
   const options = {

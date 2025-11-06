@@ -7,6 +7,7 @@ import {
   updateUserProfile,
   changePassword,
   updateUserRole,
+  registerAdmin,
 } from "../controllers/userController.js";
 
 // Import NEW auth controller functions
@@ -47,6 +48,7 @@ router.post("/verify-totp", authLimiter, verifyWithTOTP);
 router.post("/setup-security-questions", authLimiter, setupSecurityQuestions);
 router.post("/verify-security-questions", authLimiter, verifyWithSecurityQuestions);
 router.get("/verification-status/:userId", authLimiter, getVerificationStatus);
+router.post("/register-admin", authLimiter, registerAdmin);
 
 // Login routes (unchanged)
 router.post("/login", authLimiter, loginUser);
