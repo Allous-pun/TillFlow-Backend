@@ -1,17 +1,25 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import {
-  registerUser,
-  verifyOTP,
   loginUser,
   adminLogin,
   getUserProfile,
   updateUserProfile,
-  updateEmail,
-  verifyEmailUpdate,
-  updateUserRole,
   changePassword,
+  updateUserRole,
 } from "../controllers/userController.js";
+
+// Import NEW auth controller functions
+import {
+  registerUser,
+  verifyWithTOTP,
+  setupSecurityQuestions,
+  verifyWithSecurityQuestions,
+  getVerificationStatus,
+  getBackupCodes,
+  regenerateBackupCodes,
+} from "../controllers/authController.js";
+
 import { protect, adminOnly } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
@@ -33,18 +41,25 @@ const generalLimiter = rateLimit({
   }
 });
 
-// Public routes with rate limiting
+// Public routes with rate limiting - NEW AUTH FLOW
 router.post("/register", authLimiter, registerUser);
-router.post("/verify-otp", authLimiter, verifyOTP);
+router.post("/verify-totp", authLimiter, verifyWithTOTP);
+router.post("/setup-security-questions", authLimiter, setupSecurityQuestions);
+router.post("/verify-security-questions", authLimiter, verifyWithSecurityQuestions);
+router.get("/verification-status/:userId", authLimiter, getVerificationStatus);
+
+// Login routes (unchanged)
 router.post("/login", authLimiter, loginUser);
 router.post("/admin-login", authLimiter, adminLogin);
-router.post("/verify-email", authLimiter, verifyEmailUpdate);
 
 // Protected routes
 router.get("/profile", generalLimiter, protect, getUserProfile);
 router.put("/profile", generalLimiter, protect, updateUserProfile);
-router.put("/change-email", generalLimiter, protect, updateEmail);
 router.put("/change-password", generalLimiter, protect, changePassword);
+
+// Backup codes management
+router.get("/backup-codes", generalLimiter, protect, getBackupCodes);
+router.post("/regenerate-backup-codes", generalLimiter, protect, regenerateBackupCodes);
 
 // Admin only routes
 router.put("/:userId/role", generalLimiter, protect, adminOnly, updateUserRole);

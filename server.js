@@ -1,9 +1,11 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import app from "./src/app.js";
 
-// Load environment variables
+// Load environment variables FIRST
 dotenv.config();
+
+// Now import other modules that depend on environment variables
+import app from "./src/app.js";
 
 const PORT = process.env.PORT || 5000;
 const MONGO_URL = process.env.MONGO_URL;
@@ -17,7 +19,6 @@ const connectDB = async () => {
       throw new Error('MONGO_URL is not defined in environment variables');
     }
 
-    // Remove deprecated options - use modern connection
     await mongoose.connect(MONGO_URL);
     console.log("✅ MongoDB connected successfully");
     
@@ -26,18 +27,11 @@ const connectDB = async () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📊 MongoDB: Connected to TillFlow database`);
+      console.log(`📧 Email Service: ${process.env.RESEND_API_KEY ? 'Enabled' : 'Mock Mode'}`);
     });
     
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error.message);
-    
-    // More specific error messages
-    if (error.name === 'MongoNetworkError') {
-      console.log('💡 Tip: Check your internet connection and MongoDB Atlas whitelist settings');
-    } else if (error.name === 'MongoServerError') {
-      console.log('💡 Tip: Check your MongoDB Atlas credentials and database name');
-    }
-    
     process.exit(1);
   }
 };
