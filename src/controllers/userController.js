@@ -1,5 +1,5 @@
 import User from "../models/User.js";
-import UserSecurity from "../models/UserSecurity.js"; // ADDED THIS IMPORT
+import UserSecurity from "../models/UserSecurity.js";
 import jwt from "jsonwebtoken";
 
 // Utility to generate JWT
