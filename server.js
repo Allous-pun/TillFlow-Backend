@@ -27,7 +27,7 @@ const connectDB = async () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📊 MongoDB: Connected to TillFlow database`);
-      console.log(`📧 Email Service: ${process.env.RESEND_API_KEY ? 'Enabled' : 'Mock Mode'}`);
+      // REMOVED email service reference
     });
     
   } catch (error) {

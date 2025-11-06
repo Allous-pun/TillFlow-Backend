@@ -4,7 +4,9 @@ import userRoutes from "./routes/userRoutes.js";
 
 const app = express();
 
-// Middleware
+// Middleware - ADD THIS LINE for Render proxy
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json());
 
