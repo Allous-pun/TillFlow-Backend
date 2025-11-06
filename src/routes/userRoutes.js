@@ -7,7 +7,6 @@ import {
   updateUserProfile,
   changePassword,
   updateUserRole,
-  registerAdmin,
 } from "../controllers/userController.js";
 
 // Import NEW auth controller functions
@@ -19,6 +18,7 @@ import {
   getVerificationStatus,
   getBackupCodes,
   regenerateBackupCodes,
+  registerAdmin, // MOVED THIS FROM userController.js TO HERE
 } from "../controllers/authController.js";
 
 import { protect, adminOnly } from "../middleware/authMiddleware.js";
@@ -48,7 +48,7 @@ router.post("/verify-totp", authLimiter, verifyWithTOTP);
 router.post("/setup-security-questions", authLimiter, setupSecurityQuestions);
 router.post("/verify-security-questions", authLimiter, verifyWithSecurityQuestions);
 router.get("/verification-status/:userId", authLimiter, getVerificationStatus);
-router.post("/register-admin", authLimiter, registerAdmin);
+router.post("/register-admin", authLimiter, registerAdmin); // This uses registerAdmin from authController
 
 // Login routes (unchanged)
 router.post("/login", authLimiter, loginUser);
