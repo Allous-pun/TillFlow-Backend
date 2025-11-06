@@ -89,17 +89,21 @@ const generateVerificationOptions = async (user) => {
     manualEntryCode: totpSecret.base32
   };
 
-  // Generate security questions options
-  options.securityQuestions = SecurityChallengeService.generateSecurityQuestions();
+  // Generate security questions options (just questions, answers will be set later)
+  const securityQuestionTexts = SecurityChallengeService.generateSecurityQuestions();
+  options.securityQuestions = securityQuestionTexts;
 
   // Generate math challenge
   options.mathChallenge = ChallengeUtils.generateMathChallenge();
 
-  // Store initial security data
+  // Store initial security data - FIXED: only store questions without answers
   await UserSecurity.create({
     userId: user._id,
     totpSecret: totpSecret.base32,
-    securityQuestions: options.securityQuestions.map(q => ({ question: q }))
+    securityQuestions: securityQuestionTexts.map(question => ({ 
+      question: question,
+      answer: "" // Empty initially, will be set during verification
+    }))
   });
 
   return options;
