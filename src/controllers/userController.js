@@ -297,3 +297,126 @@ export const updateUserRole = async (req, res) => {
     });
   }
 };
+
+// Get all users (Admin only)
+export const getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find()
+      .select('-password -emailVerificationToken -emailVerificationExpires')
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      count: users.length,
+      users
+    });
+  } catch (error) {
+    console.error('Get all users error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error while fetching users" 
+    });
+  }
+};
+
+// Get user by ID (Admin only)
+export const getUserById = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const user = await User.findById(userId)
+      .select('-password -emailVerificationToken -emailVerificationExpires');
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+
+    res.json({
+      success: true,
+      user
+    });
+  } catch (error) {
+    console.error('Get user by ID error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error while fetching user" 
+    });
+  }
+};
+
+// Delete user (Admin only)
+export const deleteUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+
+    // Prevent admin from deleting themselves
+    if (user._id.toString() === req.user.id) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Cannot delete your own account" 
+      });
+    }
+
+    await User.findByIdAndDelete(userId);
+    
+    // Also delete associated UserSecurity record
+    await UserSecurity.findOneAndDelete({ userId });
+
+    res.json({ 
+      success: true,
+      message: "User deleted successfully" 
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error while deleting user" 
+    });
+  }
+};
+
+// Get users statistics (Admin only)
+export const getUserStats = async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const verifiedUsers = await User.countDocuments({ verified: true });
+    const adminUsers = await User.countDocuments({ role: 'admin' });
+    const merchantUsers = await User.countDocuments({ role: 'merchant' });
+    
+    // Users created in last 7 days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const recentUsers = await User.countDocuments({ 
+      createdAt: { $gte: sevenDaysAgo } 
+    });
+
+    res.json({
+      success: true,
+      stats: {
+        totalUsers,
+        verifiedUsers,
+        adminUsers,
+        merchantUsers,
+        recentUsers,
+        unverifiedUsers: totalUsers - verifiedUsers
+      }
+    });
+  } catch (error) {
+    console.error('Get user stats error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error while fetching user statistics" 
+    });
+  }
+};

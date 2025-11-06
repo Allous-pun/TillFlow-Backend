@@ -7,6 +7,10 @@ import {
   updateUserProfile,
   changePassword,
   updateUserRole,
+  getAllUsers,
+  getUserById,
+  deleteUser,
+  getUserStats,
 } from "../controllers/userController.js";
 
 // Import NEW auth controller functions
@@ -65,5 +69,13 @@ router.post("/regenerate-backup-codes", generalLimiter, protect, regenerateBacku
 
 // Admin only routes
 router.put("/:userId/role", generalLimiter, protect, adminOnly, updateUserRole);
+
+// Admin only routes - ADD THESE
+router.get("/admin/users", generalLimiter, protect, adminOnly, getAllUsers);
+router.get("/admin/users/stats", generalLimiter, protect, adminOnly, getUserStats);
+router.get("/admin/users/:userId", generalLimiter, protect, adminOnly, getUserById);
+router.delete("/admin/users/:userId", generalLimiter, protect, adminOnly, deleteUser);
+router.put("/:userId/role", generalLimiter, protect, adminOnly, updateUserRole);
+
 
 export default router;
