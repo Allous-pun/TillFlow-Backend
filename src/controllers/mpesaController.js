@@ -1,6 +1,6 @@
 import Transaction from "../models/Transaction.js";
 import mpesaService from "../services/mpesaService.js";
-import { MpesaUtils } from "../utils/mpesaUtils.js"; // Changed this line
+import { MpesaUtils } from "../utils/mpesaUtils.js";
 
 // Handle validation webhook from Daraja
 export const handleValidation = async (req, res) => {
@@ -327,16 +327,26 @@ export const handleSTKCallback = async (req, res) => {
   }
 };
 
-// Initiate STK Push (Lipa Na M-Pesa)
+// Initiate STK Push (Lipa Na M-Pesa) - UPDATED to use business credentials from DB
 export const initiateSTKPush = async (req, res) => {
   try {
-    const { phoneNumber, amount, accountReference, description } = req.body;
+    const { phoneNumber, amount, accountReference, description, businessId } = req.body;
     const merchantId = req.user.id;
 
-    if (!phoneNumber || !amount || !accountReference) {
+    if (!phoneNumber || !amount || !accountReference || !businessId) {
       return res.status(400).json({
         success: false,
-        message: "phoneNumber, amount, and accountReference are required"
+        message: "phoneNumber, amount, accountReference, and businessId are required"
+      });
+    }
+
+    // Get business credentials from database
+    const businessCredentials = await mpesaService.getBusinessCredentials(businessId, merchantId);
+    
+    if (!businessCredentials.success) {
+      return res.status(400).json({
+        success: false,
+        message: businessCredentials.message
       });
     }
 
@@ -345,7 +355,8 @@ export const initiateSTKPush = async (req, res) => {
       mpesaTransactionId: `PENDING-${Date.now()}`,
       internalReference: `STK-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
       merchant: merchantId,
-      businessShortCode: process.env.MPESA_SHORTCODE,
+      business: businessId, // Link to specific business
+      businessShortCode: businessCredentials.shortCode,
       amount: parseFloat(amount),
       transactionType: 'Buy Goods',
       customer: {
@@ -360,12 +371,16 @@ export const initiateSTKPush = async (req, res) => {
 
     await pendingTransaction.save();
 
-    // Initiate STK Push via M-Pesa service
+    // Initiate STK Push via M-Pesa service with business credentials
     const stkResult = await mpesaService.initiateSTKPush({
       phoneNumber,
       amount: parseFloat(amount),
       accountReference,
-      transactionDesc: description || `Payment for ${accountReference}`
+      transactionDesc: description || `Payment for ${accountReference}`,
+      businessShortCode: businessCredentials.shortCode,
+      consumerKey: businessCredentials.consumerKey,
+      consumerSecret: businessCredentials.consumerSecret,
+      passKey: businessCredentials.passKey
     });
 
     if (!stkResult.success) {
@@ -391,7 +406,12 @@ export const initiateSTKPush = async (req, res) => {
       message: "STK Push initiated successfully",
       checkoutRequestId: stkResult.checkoutRequestId,
       customerMessage: stkResult.customerMessage,
-      internalReference: pendingTransaction.internalReference
+      internalReference: pendingTransaction.internalReference,
+      business: {
+        id: businessId,
+        name: businessCredentials.businessName,
+        shortCode: businessCredentials.shortCode
+      }
     });
 
   } catch (error) {

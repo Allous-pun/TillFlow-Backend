@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
-import crypto from "crypto"; // Added missing import
+import crypto from "crypto";
 
 const { Schema } = mongoose;
 
@@ -9,8 +9,8 @@ function validateFullName(name) {
   const parts = name.trim().split(" ");
   if (parts.length === 0) return false;
   for (const part of parts) {
-    if (!/^[A-Za-z]+$/.test(part)) return false; // only letters
-    if (!/^([A-Z][a-z]*|[a-z]+)$/.test(part)) return false; // strict capitalization
+    if (!/^[A-Za-z]+$/.test(part)) return false;
+    if (!/^([A-Z][a-z]*|[a-z]+)$/.test(part)) return false;
   }
   return true;
 }
@@ -78,12 +78,19 @@ const userSchema = new Schema(
       default: 0,
     },
     lockUntil: Date,
-    businesses: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Business",
-      },
-    ],
+    
+    // UPDATED: Business relationships
+    businesses: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Business",
+    }],
+    
+    // NEW: Currently selected business for session
+    currentBusiness: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Business",
+    },
+    
     profileCompleted: {
       type: Boolean,
       default: false,
@@ -107,6 +114,16 @@ userSchema.virtual('isLocked').get(function() {
   return !!(this.lockUntil && this.lockUntil > Date.now());
 });
 
+// Virtual for business count
+userSchema.virtual('businessCount').get(function() {
+  return this.businesses ? this.businesses.length : 0;
+});
+
+// Virtual for active business
+userSchema.virtual('activeBusiness').get(function() {
+  return this.currentBusiness || (this.businesses && this.businesses[0]);
+});
+
 // Pre-save hook to hash password
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
@@ -128,56 +145,111 @@ userSchema.pre("save", function (next) {
   next();
 });
 
-// Method to compare password
-userSchema.methods.comparePassword = async function (enteredPassword) {
-  if (this.isLocked) {
-    throw new Error('Account is temporarily locked due to too many failed attempts');
+// Static Methods
+userSchema.statics = {
+  // Find user by email with business population
+  findByEmail(email) {
+    return this.findOne({ email })
+      .populate('businesses', 'businessName mpesaShortCode businessType isActive')
+      .populate('currentBusiness', 'businessName mpesaShortCode businessType')
+      .exec();
+  },
+
+  // Find user by ID with business population
+  findByIdWithBusinesses(userId) {
+    return this.findById(userId)
+      .populate('businesses', 'businessName mpesaShortCode businessType isActive')
+      .populate('currentBusiness', 'businessName mpesaShortCode businessType')
+      .exec();
   }
-  
-  const isMatch = await bcrypt.compare(enteredPassword, this.password);
-  
-  if (isMatch) {
-    // Reset failed attempts on successful login
-    if (this.failedLoginAttempts > 0) {
-      this.failedLoginAttempts = 0;
-      this.lockUntil = undefined;
+};
+
+// Instance Methods
+userSchema.methods = {
+  // Compare password
+  comparePassword: async function (enteredPassword) {
+    if (this.isLocked) {
+      throw new Error('Account is temporarily locked due to too many failed attempts');
+    }
+    
+    const isMatch = await bcrypt.compare(enteredPassword, this.password);
+    
+    if (isMatch) {
+      if (this.failedLoginAttempts > 0) {
+        this.failedLoginAttempts = 0;
+        this.lockUntil = undefined;
+        await this.save();
+      }
+      return true;
+    } else {
+      this.failedLoginAttempts += 1;
+      if (this.failedLoginAttempts >= 5) {
+        this.lockUntil = Date.now() + 30 * 60 * 1000;
+      }
       await this.save();
+      return false;
     }
-    return true;
-  } else {
-    // Increment failed attempts
-    this.failedLoginAttempts += 1;
-    
-    // Lock account after 5 failed attempts for 30 minutes
-    if (this.failedLoginAttempts >= 5) {
-      this.lockUntil = Date.now() + 30 * 60 * 1000; // 30 minutes
+  },
+
+  // Generate email verification token
+  generateEmailVerificationToken: function() {
+    const token = crypto.randomBytes(20).toString('hex');
+    this.emailVerificationToken = token;
+    this.emailVerificationExpires = Date.now() + 24 * 60 * 60 * 1000;
+    return token;
+  },
+
+  // Update last login
+  updateLastLogin: function() {
+    this.lastLogin = new Date();
+    return this.save();
+  },
+
+  // Add business to user
+  addBusiness: function(businessId) {
+    if (!this.businesses.includes(businessId)) {
+      this.businesses.push(businessId);
+      // Set as current business if this is the first one
+      if (!this.currentBusiness) {
+        this.currentBusiness = businessId;
+      }
     }
-    
-    await this.save();
-    return false;
+    return this.save();
+  },
+
+  // Set current business
+  setCurrentBusiness: function(businessId) {
+    if (this.businesses.includes(businessId)) {
+      this.currentBusiness = businessId;
+      return this.save();
+    }
+    throw new Error('Business not associated with this user');
+  },
+
+  // Get user summary
+  getSummary: function() {
+    return {
+      id: this._id,
+      email: this.email,
+      fullName: this.fullName,
+      phoneNumber: this.phoneNumber,
+      role: this.role,
+      verified: this.verified,
+      profileCompleted: this.profileCompleted,
+      businessCount: this.businessCount,
+      currentBusiness: this.currentBusiness,
+      lastLogin: this.lastLogin,
+      createdAt: this.createdAt
+    };
+  },
+
+  // Get user with business details
+  getFullDetails: function() {
+    return {
+      ...this.getSummary(),
+      businesses: this.businesses
+    };
   }
-};
-
-// Method to generate email verification token
-userSchema.methods.generateEmailVerificationToken = function() {
-  const token = crypto.randomBytes(20).toString('hex');
-  this.emailVerificationToken = token;
-  this.emailVerificationExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-  return token;
-};
-
-// Method to update last login
-userSchema.methods.updateLastLogin = function() {
-  this.lastLogin = new Date();
-  return this.save();
-};
-
-// Static method to find by verification token
-userSchema.statics.findByVerificationToken = function(token) {
-  return this.findOne({
-    emailVerificationToken: token,
-    emailVerificationExpires: { $gt: Date.now() }
-  });
 };
 
 const User = mongoose.model("User", userSchema);

@@ -1,4 +1,5 @@
 import axios from "axios";
+import Business from "../models/Business.js";
 
 class MpesaService {
   constructor() {
@@ -10,17 +11,72 @@ class MpesaService {
     this.tokenExpiry = null;
   }
 
-  // Generate access token for Daraja API
-  async generateAccessToken() {
+  // NEW: Get business credentials from database
+  async getBusinessCredentials(businessId, merchantId = null) {
     try {
-      // Check if token is still valid
-      if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
+      // Build query - if merchantId is provided, verify ownership
+      const query = { _id: businessId, isActive: true };
+      if (merchantId) {
+        query.owner = merchantId;
+      }
+
+      const business = await Business.findOne(query).select(
+        'businessName mpesaShortCode mpesaConsumerKey mpesaConsumerSecret mpesaPassKey businessType isActive'
+      );
+
+      if (!business) {
+        return {
+          success: false,
+          message: "Business not found or you don't have permission to access it"
+        };
+      }
+
+      // Validate that all required credentials are present
+      const requiredFields = ['mpesaShortCode', 'mpesaConsumerKey', 'mpesaConsumerSecret', 'mpesaPassKey'];
+      const missingFields = requiredFields.filter(field => !business[field]);
+
+      if (missingFields.length > 0) {
+        return {
+          success: false,
+          message: `Business missing required M-Pesa credentials: ${missingFields.join(', ')}`
+        };
+      }
+
+      return {
+        success: true,
+        businessName: business.businessName,
+        shortCode: business.mpesaShortCode,
+        consumerKey: business.mpesaConsumerKey,
+        consumerSecret: business.mpesaConsumerSecret,
+        passKey: business.mpesaPassKey,
+        businessType: business.businessType
+      };
+
+    } catch (error) {
+      console.error('Get business credentials error:', error);
+      return {
+        success: false,
+        message: "Error retrieving business credentials",
+        error: error.message
+      };
+    }
+  }
+
+  // Generate access token for Daraja API
+  async generateAccessToken(consumerKey = null, consumerSecret = null) {
+    try {
+      // Use provided credentials or fall back to environment variables
+      const credKey = consumerKey || process.env.MPESA_CONSUMER_KEY;
+      const credSecret = consumerSecret || process.env.MPESA_CONSUMER_SECRET;
+
+      // Check if token is still valid (only for default credentials)
+      if (!consumerKey && !consumerSecret && this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
         return this.accessToken;
       }
 
       console.log('🔑 Generating new access token...');
       
-      const credentials = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
+      const credentials = Buffer.from(`${credKey}:${credSecret}`).toString('base64');
       
       const response = await axios.get(`${this.baseURL}/oauth/v1/generate?grant_type=client_credentials`, {
         headers: {
@@ -30,11 +86,14 @@ class MpesaService {
         timeout: 10000
       });
 
-      this.accessToken = response.data.access_token;
-      this.tokenExpiry = Date.now() + (response.data.expires_in * 1000) - 60000; // 1 minute buffer
+      // Only cache token if using default credentials
+      if (!consumerKey && !consumerSecret) {
+        this.accessToken = response.data.access_token;
+        this.tokenExpiry = Date.now() + (response.data.expires_in * 1000) - 60000; // 1 minute buffer
+      }
 
       console.log('✅ Access token generated successfully');
-      return this.accessToken;
+      return response.data.access_token;
 
     } catch (error) {
       console.error('❌ Failed to generate access token:', error.response?.data || error.message);
@@ -43,9 +102,11 @@ class MpesaService {
   }
 
   // Generate Lipa Na M-Pesa password
-  generateLNMPassword() {
+  generateLNMPassword(shortCode = null, passKey = null) {
     const timestamp = this.getCurrentTimestamp();
-    const password = Buffer.from(`${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
+    const businessShortCode = shortCode || process.env.MPESA_SHORTCODE;
+    const businessPassKey = passKey || process.env.MPESA_PASSKEY;
+    const password = Buffer.from(`${businessShortCode}${businessPassKey}${timestamp}`).toString('base64');
     return { password, timestamp };
   }
 
@@ -60,17 +121,19 @@ class MpesaService {
       String(now.getSeconds()).padStart(2, '0');
   }
 
-  // Initiate STK Push (Lipa Na M-Pesa)
+  // Initiate STK Push (Lipa Na M-Pesa) - UPDATED to support business credentials
   async initiateSTKPush(paymentData) {
     try {
-      const token = await this.generateAccessToken();
-      const { password, timestamp } = this.generateLNMPassword();
-
       const {
         phoneNumber,
         amount,
         accountReference,
-        transactionDesc = 'Payment'
+        transactionDesc = 'Payment',
+        // NEW: Business-specific credentials (optional)
+        businessShortCode = null,
+        consumerKey = null,
+        consumerSecret = null,
+        passKey = null
       } = paymentData;
 
       // Validate input
@@ -78,21 +141,25 @@ class MpesaService {
         throw new Error('phoneNumber, amount, and accountReference are required');
       }
 
+      // Use business credentials if provided, otherwise use environment variables
+      const shortCode = businessShortCode || process.env.MPESA_SHORTCODE;
+      const token = await this.generateAccessToken(consumerKey, consumerSecret);
+      const { password, timestamp } = this.generateLNMPassword(shortCode, passKey);
+
       // Format phone number to 254 format
       const formattedPhone = phoneNumber.startsWith('254') ? phoneNumber : 
                             phoneNumber.startsWith('0') ? `254${phoneNumber.substring(1)}` : 
                             `254${phoneNumber}`;
 
       const payload = {
-        BusinessShortCode: process.env.MPESA_SHORTCODE,
+        BusinessShortCode: shortCode,
         Password: password,
         Timestamp: timestamp,
         TransactionType: 'CustomerPayBillOnline',
         Amount: Math.floor(amount),
         PartyA: formattedPhone,
-        PartyB: process.env.MPESA_SHORTCODE,
+        PartyB: shortCode,
         PhoneNumber: formattedPhone,
-        // CHANGED: Remove "mpesa" from STK callback URL too
         CallBackURL: `${process.env.MPESA_CALLBACK_BASE_URL}/api/webhook/stk-callback`,
         AccountReference: accountReference.substring(0, 12),
         TransactionDesc: transactionDesc.substring(0, 13)
@@ -101,7 +168,9 @@ class MpesaService {
       console.log('📱 Initiating STK Push:', {
         phone: formattedPhone,
         amount,
-        reference: accountReference
+        reference: accountReference,
+        shortCode: shortCode,
+        usingBusinessCredentials: !!businessShortCode
       });
 
       const response = await axios.post(
@@ -122,7 +191,8 @@ class MpesaService {
         success: true,
         checkoutRequestId: response.data.CheckoutRequestID,
         customerMessage: response.data.CustomerMessage,
-        responseCode: response.data.ResponseCode
+        responseCode: response.data.ResponseCode,
+        merchantRequestId: response.data.MerchantRequestID
       };
 
     } catch (error) {
@@ -136,20 +206,38 @@ class MpesaService {
     }
   }
 
-  // Check STK Push transaction status
-  async checkSTKTransactionStatus(checkoutRequestId) {
+  // Check STK Push transaction status - UPDATED to support business credentials
+  async checkSTKTransactionStatus(checkoutRequestId, businessCredentials = null) {
     try {
-      const token = await this.generateAccessToken();
-      const { password, timestamp } = this.generateLNMPassword();
+      let token;
+      let shortCode;
+      let passKey;
+
+      if (businessCredentials) {
+        // Use business credentials
+        token = await this.generateAccessToken(businessCredentials.consumerKey, businessCredentials.consumerSecret);
+        shortCode = businessCredentials.shortCode;
+        passKey = businessCredentials.passKey;
+      } else {
+        // Use default credentials
+        token = await this.generateAccessToken();
+        shortCode = process.env.MPESA_SHORTCODE;
+        passKey = process.env.MPESA_PASSKEY;
+      }
+
+      const { password, timestamp } = this.generateLNMPassword(shortCode, passKey);
 
       const payload = {
-        BusinessShortCode: process.env.MPESA_SHORTCODE,
+        BusinessShortCode: shortCode,
         Password: password,
         Timestamp: timestamp,
         CheckoutRequestID: checkoutRequestId
       };
 
-      console.log('🔍 Checking STK transaction status:', checkoutRequestId);
+      console.log('🔍 Checking STK transaction status:', {
+        checkoutRequestId,
+        usingBusinessCredentials: !!businessCredentials
+      });
 
       const response = await axios.post(
         `${this.baseURL}/mpesa/stkpushquery/v1/query`,
@@ -169,7 +257,8 @@ class MpesaService {
         success: true,
         resultCode: result.ResultCode,
         resultDesc: result.ResultDesc,
-        checkoutRequestId: result.CheckoutRequestID
+        checkoutRequestId: result.CheckoutRequestID,
+        merchantRequestId: result.MerchantRequestID
       };
 
     } catch (error) {
@@ -181,20 +270,33 @@ class MpesaService {
     }
   }
 
-  // Register C2B validation and confirmation URLs
-  async registerC2BUrls() {
+  // Register C2B validation and confirmation URLs - UPDATED to support business credentials
+  async registerC2BUrls(businessCredentials = null) {
     try {
-      const token = await this.generateAccessToken();
+      let token;
+      let shortCode;
+
+      if (businessCredentials) {
+        // Use business credentials
+        token = await this.generateAccessToken(businessCredentials.consumerKey, businessCredentials.consumerSecret);
+        shortCode = businessCredentials.shortCode;
+      } else {
+        // Use default credentials
+        token = await this.generateAccessToken();
+        shortCode = process.env.MPESA_SHORTCODE;
+      }
 
       const payload = {
-        ShortCode: process.env.MPESA_SHORTCODE,
+        ShortCode: shortCode,
         ResponseType: 'Completed',
-        // CHANGED: Remove "mpesa" from the URL paths
         ConfirmationURL: `${process.env.MPESA_CALLBACK_BASE_URL}/api/webhook/confirmation`,
         ValidationURL: `${process.env.MPESA_CALLBACK_BASE_URL}/api/webhook/validation`
       };
 
-      console.log('🌐 Registering C2B URLs');
+      console.log('🌐 Registering C2B URLs:', {
+        shortCode,
+        usingBusinessCredentials: !!businessCredentials
+      });
 
       const response = await axios.post(
         `${this.baseURL}/mpesa/c2b/v1/registerurl`,

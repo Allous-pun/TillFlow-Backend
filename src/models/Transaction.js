@@ -37,15 +37,10 @@ const transactionSchema = new mongoose.Schema({
     sparse: true // Allow null for non-STK transactions
   },
 
-  // Merchant/Business Context
-  merchant: {
+  // Business Context (UPDATED: Changed from merchant to business)
+  business: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-    index: true
-  },
-  businessShortCode: {
-    type: String,
+    ref: "Business",
     required: true,
     index: true
   },
@@ -152,22 +147,22 @@ transactionSchema.virtual('isPending').get(function() {
   return this.status === 'pending';
 });
 
-// Indexes for performance - REMOVE DUPLICATES
-transactionSchema.index({ merchant: 1, createdAt: -1 });
+// Indexes for performance
+transactionSchema.index({ business: 1, createdAt: -1 });
 transactionSchema.index({ 'customer.phoneNumber': 1 });
 transactionSchema.index({ transactionTime: -1 });
-transactionSchema.index({ status: 1, merchant: 1 });
+transactionSchema.index({ status: 1, business: 1 });
 transactionSchema.index({ checkoutRequestId: 1 }); // For STK callback lookups
 transactionSchema.index({ source: 1, status: 1 }); // For filtering by source and status
 
 // Static Methods
 transactionSchema.statics = {
-  // Find transactions by merchant with pagination
-  findByMerchant(merchantId, options = {}) {
+  // Find transactions by business with pagination (UPDATED)
+  findByBusiness(businessId, options = {}) {
     const { page = 1, limit = 50, sort = '-createdAt', status, source } = options;
     const skip = (page - 1) * limit;
 
-    const filter = { merchant: merchantId };
+    const filter = { business: businessId };
     if (status) filter.status = status;
     if (source) filter.source = source;
 
@@ -175,19 +170,42 @@ transactionSchema.statics = {
       .sort(sort)
       .skip(skip)
       .limit(limit)
-      .populate('merchant', 'fullName email')
+      .populate('business', 'businessName mpesaShortCode businessType')
       .exec();
   },
 
-  // Get daily summary for a merchant
-  async getDailySummary(merchantId, date = new Date()) {
+  // Find transactions by owner (across all businesses) (NEW)
+  findByOwner(ownerId, options = {}) {
+    const { page = 1, limit = 50, sort = '-createdAt', status, source } = options;
+    const skip = (page - 1) * limit;
+
+    const Business = mongoose.model('Business');
+    
+    return Business.find({ owner: ownerId })
+      .then(businesses => {
+        const businessIds = businesses.map(b => b._id);
+        const filter = { business: { $in: businessIds } };
+        if (status) filter.status = status;
+        if (source) filter.source = source;
+
+        return this.find(filter)
+          .sort(sort)
+          .skip(skip)
+          .limit(limit)
+          .populate('business', 'businessName mpesaShortCode businessType')
+          .exec();
+      });
+  },
+
+  // Get daily summary for a business (UPDATED)
+  async getDailySummary(businessId, date = new Date()) {
     const startOfDay = new Date(date.setHours(0, 0, 0, 0));
     const endOfDay = new Date(date.setHours(23, 59, 59, 999));
 
     return this.aggregate([
       {
         $match: {
-          merchant: new mongoose.Types.ObjectId(merchantId),
+          business: new mongoose.Types.ObjectId(businessId),
           transactionTime: { $gte: startOfDay, $lte: endOfDay },
           status: 'completed'
         }
@@ -209,9 +227,56 @@ transactionSchema.statics = {
     ]);
   },
 
+  // Get daily summary for owner (across all businesses) (NEW)
+  async getOwnerDailySummary(ownerId, date = new Date()) {
+    const startOfDay = new Date(date.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(date.setHours(23, 59, 59, 999));
+
+    const Business = mongoose.model('Business');
+    const businesses = await Business.find({ owner: ownerId });
+    const businessIds = businesses.map(b => b._id);
+
+    return this.aggregate([
+      {
+        $match: {
+          business: { $in: businessIds },
+          transactionTime: { $gte: startOfDay, $lte: endOfDay },
+          status: 'completed'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalTransactions: { $sum: 1 },
+          totalAmount: { $sum: '$amount' },
+          averageAmount: { $avg: '$amount' },
+          stkPushCount: {
+            $sum: { $cond: [{ $eq: ['$source', 'stk-push'] }, 1, 0] }
+          },
+          c2bCount: {
+            $sum: { $cond: [{ $eq: ['$source', 'mpesa-api'] }, 1, 0] }
+          },
+          businessCount: { $addToSet: '$business' }
+        }
+      },
+      {
+        $project: {
+          totalTransactions: 1,
+          totalAmount: 1,
+          averageAmount: 1,
+          stkPushCount: 1,
+          c2bCount: 1,
+          activeBusinesses: { $size: '$businessCount' }
+        }
+      }
+    ]);
+  },
+
   // Find STK transaction by checkout request ID
   findByCheckoutRequestId(checkoutRequestId) {
-    return this.findOne({ checkoutRequestId }).exec();
+    return this.findOne({ checkoutRequestId })
+      .populate('business', 'businessName mpesaShortCode')
+      .exec();
   },
 
   // Update STK transaction status
@@ -231,7 +296,7 @@ transactionSchema.statics = {
       { checkoutRequestId },
       updateData,
       { new: true }
-    ).exec();
+    ).populate('business', 'businessName mpesaShortCode').exec();
   }
 };
 
@@ -257,6 +322,19 @@ transactionSchema.methods = {
       isSTKPush: this.isSTKPush,
       description: this.description,
       createdAt: this.createdAt
+    };
+  },
+
+  // Get transaction with business details
+  getFullDetails() {
+    return {
+      ...this.getSummary(),
+      business: this.business ? {
+        id: this.business._id,
+        name: this.business.businessName,
+        shortCode: this.business.mpesaShortCode,
+        type: this.business.businessType
+      } : null
     };
   },
 
