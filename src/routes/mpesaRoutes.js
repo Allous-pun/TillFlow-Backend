@@ -5,7 +5,9 @@ import {
   handleConfirmation,
   checkTransactionStatus,
   getMerchantTransactions,
-  getTransactionAnalytics
+  getTransactionAnalytics,
+  handleSTKCallback,
+  initiateSTKPush // ADD THIS IMPORT
 } from "../controllers/mpesaController.js";
 import { protect, merchantOnly } from "../middleware/authMiddleware.js";
 import { MpesaUtils } from "../utils/mpesaUtils.js";
@@ -32,12 +34,14 @@ const authLimiter = rateLimit({
 });
 
 // ========== PUBLIC ROUTES (Daraja Webhooks) ==========
-// CHANGED: Remove "mpesa" from the webhook paths
 router.post("/webhook/validation", webhookLimiter, MpesaUtils.validateMpesaWebhook, handleValidation);
 router.post("/webhook/confirmation", webhookLimiter, MpesaUtils.validateMpesaWebhook, handleConfirmation);
+router.post("/webhook/stk-callback", webhookLimiter, handleSTKCallback);
 
 // ========== PROTECTED ROUTES (Merchant Only) ==========
-// Keep these as they are (protected routes don't need to change)
+// STK Push initiation
+router.post("/stk-push", authLimiter, protect, merchantOnly, initiateSTKPush);
+
 router.post("/transaction/status", authLimiter, protect, merchantOnly, checkTransactionStatus);
 router.get("/transaction/status", authLimiter, protect, merchantOnly, checkTransactionStatus);
 router.get("/transactions", authLimiter, protect, merchantOnly, getMerchantTransactions);

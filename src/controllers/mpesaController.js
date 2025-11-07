@@ -271,3 +271,134 @@ export const getTransactionAnalytics = async (req, res) => {
     });
   }
 };
+
+// STK Callback from Safaricom (after customer enters PIN)
+export const handleSTKCallback = async (req, res) => {
+  try {
+    const callback = req.body.Body.stkCallback;
+
+    console.log("📥 STK CALLBACK RECEIVED:", callback);
+
+    const {
+      MerchantRequestID,
+      CheckoutRequestID,
+      ResultCode,
+      ResultDesc,
+      CallbackMetadata
+    } = callback;
+
+    // Find the pending transaction by checkout request ID
+    const transaction = await Transaction.findOne({ checkoutRequestId: CheckoutRequestID });
+
+    if (!transaction) {
+      console.log("❌ STK Callback: No transaction found for checkout request:", CheckoutRequestID);
+      return res.json({ success: false, message: "Transaction not found" });
+    }
+
+    // MPESA result codes: 0 = success, anything else = cancelled/failed
+    if (ResultCode !== 0) {
+      console.log("❌ STK Failed:", ResultDesc);
+      
+      // Update transaction status to failed
+      await transaction.markAsFailed(ResultDesc, ResultCode.toString());
+      
+      return res.json({ success: true }); // Always return success to Daraja
+    }
+
+    const meta = {};
+    CallbackMetadata?.Item?.forEach(item => {
+      meta[item.Name] = item.Value;
+    });
+
+    // Update transaction as completed
+    await transaction.markAsCompleted(meta.MpesaReceiptNumber, callback);
+
+    console.log("✅ STK Transaction completed:", transaction.internalReference);
+
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error("❌ STK Callback error:", error);
+
+    res.json({
+      success: false,
+      message: "Callback received but processing failed"
+    });
+  }
+};
+
+// Initiate STK Push (Lipa Na M-Pesa)
+export const initiateSTKPush = async (req, res) => {
+  try {
+    const { phoneNumber, amount, accountReference, description } = req.body;
+    const merchantId = req.user.id;
+
+    if (!phoneNumber || !amount || !accountReference) {
+      return res.status(400).json({
+        success: false,
+        message: "phoneNumber, amount, and accountReference are required"
+      });
+    }
+
+    // Create pending transaction first
+    const pendingTransaction = new Transaction({
+      mpesaTransactionId: `PENDING-${Date.now()}`,
+      internalReference: `STK-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      merchant: merchantId,
+      businessShortCode: process.env.MPESA_SHORTCODE,
+      amount: parseFloat(amount),
+      transactionType: 'Buy Goods',
+      customer: {
+        phoneNumber: phoneNumber.startsWith('254') ? phoneNumber : `254${phoneNumber.substring(1)}`
+      },
+      transactionTime: new Date(),
+      billRefNumber: accountReference,
+      status: 'pending',
+      source: 'mpesa-api',
+      description: description || `STK Push payment for ${accountReference}`
+    });
+
+    await pendingTransaction.save();
+
+    // Initiate STK Push via M-Pesa service
+    const stkResult = await mpesaService.initiateSTKPush({
+      phoneNumber,
+      amount: parseFloat(amount),
+      accountReference,
+      transactionDesc: description || `Payment for ${accountReference}`
+    });
+
+    if (!stkResult.success) {
+      // Update transaction status to failed
+      await Transaction.findByIdAndUpdate(pendingTransaction._id, {
+        status: 'failed',
+        description: `STK Push failed: ${stkResult.error}`
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: stkResult.error
+      });
+    }
+
+    // Update transaction with checkout request ID
+    await Transaction.findByIdAndUpdate(pendingTransaction._id, {
+      checkoutRequestId: stkResult.checkoutRequestId
+    });
+
+    res.json({
+      success: true,
+      message: "STK Push initiated successfully",
+      checkoutRequestId: stkResult.checkoutRequestId,
+      customerMessage: stkResult.customerMessage,
+      internalReference: pendingTransaction.internalReference
+    });
+
+  } catch (error) {
+    console.error('STK Push initiation error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to initiate STK Push"
+    });
+  }
+};

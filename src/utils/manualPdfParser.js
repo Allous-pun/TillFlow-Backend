@@ -2,18 +2,57 @@ import fs from "fs";
 
 /**
  * Parses PDF M-Pesa statements into structured transaction objects
+ * @param {string} filePath - Path to the PDF file
+ * @param {string} password - 6-digit OTP password from SMS
+ * @returns {Promise<Array>} Array of transaction objects
+ * @throws {Error} With friendly message for wrong password
  */
-export const parsePdfTransactions = async (filePath) => {
-  // Use dynamic import for CommonJS package
-  const pdfParseModule = await import('pdf-parse');
-  const pdfParse = pdfParseModule.default;
-  
-  const dataBuffer = fs.readFileSync(filePath);
-  const pdfData = await pdfParse(dataBuffer);
+export const parsePdfTransactions = async (filePath, password = null) => {
+  try {
+    // Use dynamic import for CommonJS package
+    const pdfParseModule = await import('pdf-parse');
+    const pdfParse = pdfParseModule.default;
+    
+    const dataBuffer = fs.readFileSync(filePath);
+    
+    // Parse PDF with optional password
+    const pdfData = await pdfParse(dataBuffer, { 
+      pwd: password || undefined 
+    });
 
-  const text = pdfData.text;
+    // Check if PDF was successfully parsed and has content
+    if (!pdfData.text || pdfData.text.trim().length === 0) {
+      throw new Error("PDF appears to be empty or could not be read. Please check the file and try again.");
+    }
 
-  return extractTransactions(text);
+    const text = pdfData.text;
+    const transactions = extractTransactions(text);
+
+    if (transactions.length === 0) {
+      throw new Error("No transactions found in the PDF. Please ensure this is a valid M-Pesa statement.");
+    }
+
+    return transactions;
+
+  } catch (error) {
+    // Handle password-related errors specifically
+    if (error.message.includes('password') || 
+        error.message.includes('encrypted') ||
+        error.message.includes('Password') ||
+        error.message.includes('security')) {
+      throw new Error("Wrong password. Please check the 6-digit code from your SMS and try again.");
+    }
+    
+    // Handle other PDF parsing errors
+    if (error.message.includes('Invalid') || 
+        error.message.includes('corrupt') ||
+        error.message.includes('not a PDF')) {
+      throw new Error("Invalid PDF file. Please ensure you're uploading a valid M-Pesa statement PDF.");
+    }
+
+    // Re-throw other errors with original message
+    throw new Error(`PDF processing failed: ${error.message}`);
+  }
 };
 
 /**

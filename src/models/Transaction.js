@@ -1,10 +1,10 @@
 import mongoose from "mongoose";
 
 const transactionSchema = new mongoose.Schema({
-  // Source of transaction (new)
+  // Source of transaction
   source: {
     type: String,
-    enum: ['mpesa-api', 'manual-pdf', 'manual-csv'],
+    enum: ['mpesa-api', 'manual-pdf', 'manual-csv', 'stk-push'],
     required: true,
     default: 'mpesa-api',
     index: true
@@ -13,8 +13,12 @@ const transactionSchema = new mongoose.Schema({
   // Core Transaction Identifiers
   mpesaTransactionId: {
     type: String,
-    required: true,
+    required: function() {
+      // Only require for completed transactions, not pending STK
+      return this.status === 'completed' && this.source !== 'stk-push';
+    },
     unique: true,
+    sparse: true, // Allow null for pending transactions
     index: true,
     trim: true
   },
@@ -25,6 +29,12 @@ const transactionSchema = new mongoose.Schema({
     default: function() {
       return `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     }
+  },
+
+  // STK Push specific fields
+  checkoutRequestId: {
+    type: String,
+    sparse: true // Allow null for non-STK transactions
   },
 
   // Merchant/Business Context
@@ -54,7 +64,7 @@ const transactionSchema = new mongoose.Schema({
   },
   transactionType: {
     type: String,
-    enum: ['Pay Bill', 'Buy Goods', 'Send Money', 'Withdraw'],
+    enum: ['Pay Bill', 'Buy Goods', 'Send Money', 'Withdraw', 'STK Push'],
     required: true
   },
 
@@ -112,7 +122,11 @@ const transactionSchema = new mongoose.Schema({
   // Technical Metadata
   rawMpesaResponse: {
     type: mongoose.Schema.Types.Mixed
-  }
+  },
+
+  // Error tracking for failed transactions
+  errorMessage: String,
+  errorCode: String
 }, {
   timestamps: true,
   toJSON: { virtuals: true }
@@ -128,19 +142,36 @@ transactionSchema.virtual('customer.displayPhone').get(function() {
   return this.customer.phoneNumber.replace(/^254/, '0');
 });
 
-// Indexes for performance
+// Virtual for STK Push status
+transactionSchema.virtual('isSTKPush').get(function() {
+  return this.source === 'stk-push';
+});
+
+// Virtual for pending payment
+transactionSchema.virtual('isPending').get(function() {
+  return this.status === 'pending';
+});
+
+// Indexes for performance - REMOVE DUPLICATES
 transactionSchema.index({ merchant: 1, createdAt: -1 });
 transactionSchema.index({ 'customer.phoneNumber': 1 });
 transactionSchema.index({ transactionTime: -1 });
 transactionSchema.index({ status: 1, merchant: 1 });
+transactionSchema.index({ checkoutRequestId: 1 }); // For STK callback lookups
+transactionSchema.index({ source: 1, status: 1 }); // For filtering by source and status
 
 // Static Methods
 transactionSchema.statics = {
+  // Find transactions by merchant with pagination
   findByMerchant(merchantId, options = {}) {
-    const { page = 1, limit = 50, sort = '-createdAt' } = options;
+    const { page = 1, limit = 50, sort = '-createdAt', status, source } = options;
     const skip = (page - 1) * limit;
 
-    return this.find({ merchant: merchantId })
+    const filter = { merchant: merchantId };
+    if (status) filter.status = status;
+    if (source) filter.source = source;
+
+    return this.find(filter)
       .sort(sort)
       .skip(skip)
       .limit(limit)
@@ -148,6 +179,7 @@ transactionSchema.statics = {
       .exec();
   },
 
+  // Get daily summary for a merchant
   async getDailySummary(merchantId, date = new Date()) {
     const startOfDay = new Date(date.setHours(0, 0, 0, 0));
     const endOfDay = new Date(date.setHours(23, 59, 59, 999));
@@ -165,15 +197,47 @@ transactionSchema.statics = {
           _id: null,
           totalTransactions: { $sum: 1 },
           totalAmount: { $sum: '$amount' },
-          averageAmount: { $avg: '$amount' }
+          averageAmount: { $avg: '$amount' },
+          stkPushCount: {
+            $sum: { $cond: [{ $eq: ['$source', 'stk-push'] }, 1, 0] }
+          },
+          c2bCount: {
+            $sum: { $cond: [{ $eq: ['$source', 'mpesa-api'] }, 1, 0] }
+          }
         }
       }
     ]);
+  },
+
+  // Find STK transaction by checkout request ID
+  findByCheckoutRequestId(checkoutRequestId) {
+    return this.findOne({ checkoutRequestId }).exec();
+  },
+
+  // Update STK transaction status
+  async updateSTKStatus(checkoutRequestId, status, mpesaTransactionId = null, error = null) {
+    const updateData = { status };
+    
+    if (mpesaTransactionId) {
+      updateData.mpesaTransactionId = mpesaTransactionId;
+    }
+    
+    if (error) {
+      updateData.errorMessage = error.message;
+      updateData.errorCode = error.code;
+    }
+
+    return this.findOneAndUpdate(
+      { checkoutRequestId },
+      updateData,
+      { new: true }
+    ).exec();
   }
 };
 
 // Instance Methods
 transactionSchema.methods = {
+  // Get transaction summary for API responses
   getSummary() {
     return {
       id: this.internalReference,
@@ -184,13 +248,43 @@ transactionSchema.methods = {
         phone: this.customer.displayPhone,
         name: this.customer.name
       },
-      source: this.source,         // added here too
+      source: this.source,
       time: this.transactionTime,
       status: this.status,
       type: this.transactionType,
-      reference: this.billRefNumber
+      reference: this.billRefNumber,
+      isPending: this.isPending,
+      isSTKPush: this.isSTKPush,
+      description: this.description,
+      createdAt: this.createdAt
     };
+  },
+
+  // Mark as completed (for STK callbacks)
+  markAsCompleted(mpesaTransactionId, rawResponse = null) {
+    this.status = 'completed';
+    this.mpesaTransactionId = mpesaTransactionId;
+    if (rawResponse) {
+      this.rawMpesaResponse = rawResponse;
+    }
+    return this.save();
+  },
+
+  // Mark as failed (for STK callbacks)
+  markAsFailed(errorMessage, errorCode = null) {
+    this.status = 'failed';
+    this.errorMessage = errorMessage;
+    this.errorCode = errorCode;
+    return this.save();
   }
 };
+
+// Pre-save middleware to set transaction type for STK
+transactionSchema.pre('save', function(next) {
+  if (this.source === 'stk-push' && !this.transactionType) {
+    this.transactionType = 'STK Push';
+  }
+  next();
+});
 
 export default mongoose.model("Transaction", transactionSchema);
