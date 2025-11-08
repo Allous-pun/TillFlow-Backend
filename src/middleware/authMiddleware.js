@@ -17,7 +17,9 @@ export const protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select("-password");
+    const user = await User.findById(decoded.id)
+      .select("-password")
+      .populate('currentBusiness', 'businessName mpesaShortCode businessType');
     
     if (!user) {
       return res.status(401).json({ 
@@ -34,6 +36,12 @@ export const protect = async (req, res, next) => {
     }
 
     req.user = user;
+    
+    // Set current business if available
+    if (user.currentBusiness) {
+      req.business = user.currentBusiness;
+    }
+
     next();
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {

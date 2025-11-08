@@ -1,6 +1,7 @@
 import Transaction from "../models/Transaction.js";
 import mpesaService from "../services/mpesaService.js";
 import { MpesaUtils } from "../utils/mpesaUtils.js";
+import eventBus from "../utils/eventBus.js";
 
 // Handle validation webhook from Daraja
 export const handleValidation = async (req, res) => {
@@ -14,11 +15,17 @@ export const handleValidation = async (req, res) => {
       shortCode: validationData.BusinessShortCode
     });
 
-    // Basic validation
-    if (!validationData.BillRefNumber || !validationData.TransAmount || !validationData.MSISDN) {
+    // 🆕 USE MPESAUTILS FOR VALIDATION
+    const validation = MpesaUtils.validateSTKParameters(
+      validationData.MSISDN, 
+      validationData.TransAmount, 
+      validationData.BillRefNumber
+    );
+    
+    if (!validation.isValid) {
       return res.json({
         ResultCode: 1,
-        ResultDesc: "Rejected - Missing required fields"
+        ResultDesc: `Rejected - ${validation.errors[0]}`
       });
     }
 
@@ -49,16 +56,8 @@ export const handleConfirmation = async (req, res) => {
       phone: confirmationData.MSISDN
     });
 
-    // Parse M-Pesa timestamp
-    const parseMpesaTimestamp = (timestamp) => {
-      const year = timestamp.substring(0, 4);
-      const month = timestamp.substring(4, 6);
-      const day = timestamp.substring(6, 8);
-      const hour = timestamp.substring(8, 10);
-      const minute = timestamp.substring(10, 12);
-      const second = timestamp.substring(12, 14);
-      return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
-    };
+    // 🆕 USE MPESAUTILS FOR TIMESTAMP PARSING
+    const transactionTime = MpesaUtils.parseMpesaTimestamp(confirmationData.TransTime);
 
     // For now, we'll create a transaction without merchant association
     // Later we'll map billRefNumber to specific merchants
@@ -75,7 +74,7 @@ export const handleConfirmation = async (req, res) => {
           lastName: confirmationData.LastName || ''
         }
       },
-      transactionTime: parseMpesaTimestamp(confirmationData.TransTime),
+      transactionTime: transactionTime, // 🆕 USING UTILS
       billRefNumber: confirmationData.BillRefNumber,
       invoiceNumber: confirmationData.InvoiceNumber,
       accountBalance: confirmationData.OrgAccountBalance ? parseFloat(confirmationData.OrgAccountBalance) : null,
@@ -84,6 +83,9 @@ export const handleConfirmation = async (req, res) => {
     });
 
     await transaction.save();
+    
+    // EMIT EVENT FOR AUTO-CLASSIFICATION
+    eventBus.emit("TRANSACTION_CREATED", transaction);
     
     console.log('✅ Transaction saved:', transaction.internalReference);
 
@@ -113,8 +115,10 @@ export const checkTransactionStatus = async (req, res) => {
         mpesaTransactionId: transactionId 
       });
     } else {
+      // 🆕 USE MPESAUTILS FOR PHONE NUMBER FORMATTING
+      const formattedPhone = MpesaUtils.formatPhoneNumber(phoneNumber);
       transaction = await Transaction.findOne({
-        'customer.phoneNumber': phoneNumber,
+        'customer.phoneNumber': formattedPhone,
         amount: parseFloat(amount),
         billRefNumber: reference,
         status: 'completed'
@@ -172,9 +176,17 @@ export const getMerchantTransactions = async (req, res) => {
 
     const total = await Transaction.countDocuments(filter);
 
+    // 🆕 USE MPESAUTILS FOR STATISTICS
+    const stats = MpesaUtils.calculateTransactionStats(transactions);
+
     res.json({
       success: true,
       data: transactions.map(txn => txn.getSummary()),
+      stats: {
+        totalTransactions: stats.totalTransactions,
+        totalAmount: MpesaUtils.formatCurrency(stats.totalAmount),
+        averageAmount: MpesaUtils.formatCurrency(stats.averageAmount)
+      },
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -258,6 +270,8 @@ export const getTransactionAnalytics = async (req, res) => {
       success: true,
       analytics: {
         ...result,
+        totalAmountFormatted: MpesaUtils.formatCurrency(result.totalAmount), // 🆕 FORMATTED CURRENCY
+        averageAmountFormatted: MpesaUtils.formatCurrency(result.averageAmount), // 🆕 FORMATTED CURRENCY
         period,
         dateRange: { start, end }
       }
@@ -299,8 +313,11 @@ export const handleSTKCallback = async (req, res) => {
     if (ResultCode !== 0) {
       console.log("❌ STK Failed:", ResultDesc);
       
+      // 🆕 USE MPESAUTILS FOR ERROR MESSAGE PARSING
+      const userFriendlyError = MpesaUtils.parseErrorCode(ResultCode.toString());
+      
       // Update transaction status to failed
-      await transaction.markAsFailed(ResultDesc, ResultCode.toString());
+      await transaction.markAsFailed(userFriendlyError, ResultCode.toString());
       
       return res.json({ success: true }); // Always return success to Daraja
     }
@@ -312,6 +329,9 @@ export const handleSTKCallback = async (req, res) => {
 
     // Update transaction as completed
     await transaction.markAsCompleted(meta.MpesaReceiptNumber, callback);
+
+    // EMIT EVENT FOR AUTO-CLASSIFICATION
+    eventBus.emit("TRANSACTION_CREATED", transaction);
 
     console.log("✅ STK Transaction completed:", transaction.internalReference);
 
@@ -333,10 +353,12 @@ export const initiateSTKPush = async (req, res) => {
     const { phoneNumber, amount, accountReference, description, businessId } = req.body;
     const merchantId = req.user.id;
 
-    if (!phoneNumber || !amount || !accountReference || !businessId) {
+    // 🆕 USE MPESAUTILS FOR VALIDATION
+    const validation = MpesaUtils.validateSTKParameters(phoneNumber, amount, accountReference);
+    if (!validation.isValid) {
       return res.status(400).json({
         success: false,
-        message: "phoneNumber, amount, accountReference, and businessId are required"
+        message: validation.errors.join(', ')
       });
     }
 
@@ -353,14 +375,14 @@ export const initiateSTKPush = async (req, res) => {
     // Create pending transaction first
     const pendingTransaction = new Transaction({
       mpesaTransactionId: `PENDING-${Date.now()}`,
-      internalReference: `STK-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      internalReference: MpesaUtils.generateTransactionReference('STK'), // 🆕 USING UTILS
       merchant: merchantId,
       business: businessId, // Link to specific business
       businessShortCode: businessCredentials.shortCode,
-      amount: parseFloat(amount),
+      amount: validation.amount, // 🆕 USING VALIDATED AMOUNT
       transactionType: 'Buy Goods',
       customer: {
-        phoneNumber: phoneNumber.startsWith('254') ? phoneNumber : `254${phoneNumber.substring(1)}`
+        phoneNumber: validation.formattedPhone // 🆕 USING FORMATTED PHONE
       },
       transactionTime: new Date(),
       billRefNumber: accountReference,
@@ -373,8 +395,8 @@ export const initiateSTKPush = async (req, res) => {
 
     // Initiate STK Push via M-Pesa service with business credentials
     const stkResult = await mpesaService.initiateSTKPush({
-      phoneNumber,
-      amount: parseFloat(amount),
+      phoneNumber: validation.formattedPhone, // 🆕 USING FORMATTED PHONE
+      amount: validation.amount, // 🆕 USING VALIDATED AMOUNT
       accountReference,
       transactionDesc: description || `Payment for ${accountReference}`,
       businessShortCode: businessCredentials.shortCode,
@@ -384,15 +406,18 @@ export const initiateSTKPush = async (req, res) => {
     });
 
     if (!stkResult.success) {
+      // 🆕 USE MPESAUTILS FOR ERROR MESSAGE PARSING
+      const userFriendlyError = MpesaUtils.parseErrorCode(stkResult.errorCode);
+      
       // Update transaction status to failed
       await Transaction.findByIdAndUpdate(pendingTransaction._id, {
         status: 'failed',
-        description: `STK Push failed: ${stkResult.error}`
+        description: `STK Push failed: ${userFriendlyError}`
       });
 
       return res.status(400).json({
         success: false,
-        message: stkResult.error
+        message: userFriendlyError
       });
     }
 

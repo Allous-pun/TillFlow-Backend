@@ -5,6 +5,8 @@ import mpesaRoutes from "./routes/mpesaRoutes.js";
 import mpesaService from "./services/mpesaService.js"; // ADD THIS IMPORT
 import manualTransactionRoutes from "./routes/manualTransactionRoutes.js";
 import businessRoutes from "./routes/businessRoutes.js";
+import categoryRoutes from "./routes/categoryRoutes.js";
+import categoryRuleRoutes from "./routes/categoryRuleRoutes.js";
 
 const app = express();
 
@@ -26,6 +28,8 @@ app.use("/api/users", userRoutes);
 app.use("/api/mpesa", mpesaRoutes);
 app.use("/api/transactions/manual", manualTransactionRoutes);
 app.use("/api/business", businessRoutes);
+app.use("/api/category", categoryRoutes);
+app.use("/api/category-rule", categoryRuleRoutes);
 
 // Health check route
 app.get("/api/health", (req, res) => {
