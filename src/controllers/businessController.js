@@ -384,24 +384,39 @@ export const getAllBusinesses = async (req, res) => {
     const total = await Business.countDocuments(filter);
 
     // Return limited business info without sensitive data
-    const businessList = businesses.map(business => ({
-      id: business._id,
-      businessName: business.businessName,
-      shortCode: business.mpesaShortCode,
-      businessType: business.businessType,
-      industry: business.industry,
-      contactEmail: business.contactEmail,
-      contactPhone: business.contactPhone,
-      isActive: business.isActive,
-      owner: {
-        id: business.owner._id,
-        fullName: business.owner.fullName,
-        email: business.owner.email,
-        phoneNumber: business.owner.phoneNumber
-      },
-      createdAt: business.createdAt,
-      updatedAt: business.updatedAt
-    }));
+    const businessList = businesses.map(business => {
+      // Handle cases where owner might be null or deleted
+      let ownerInfo = null;
+      if (business.owner) {
+        ownerInfo = {
+          id: business.owner._id,
+          fullName: business.owner.fullName,
+          email: business.owner.email,
+          phoneNumber: business.owner.phoneNumber
+        };
+      } else {
+        ownerInfo = {
+          id: null,
+          fullName: "Owner Not Found",
+          email: "N/A",
+          phoneNumber: "N/A"
+        };
+      }
+
+      return {
+        id: business._id,
+        businessName: business.businessName,
+        shortCode: business.mpesaShortCode,
+        businessType: business.businessType,
+        industry: business.industry,
+        contactEmail: business.contactEmail,
+        contactPhone: business.contactPhone,
+        isActive: business.isActive,
+        owner: ownerInfo,
+        createdAt: business.createdAt,
+        updatedAt: business.updatedAt
+      };
+    });
 
     res.json({
       success: true,
@@ -454,6 +469,14 @@ export const activateBusiness = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Business not found"
+      });
+    }
+
+    // Check if owner exists
+    if (!business.owner) {
+      return res.status(400).json({
+        success: false,
+        message: "Business owner not found. Cannot activate business without owner."
       });
     }
 
