@@ -7,9 +7,11 @@ import {
   getBusinessById,
   deleteBusiness,
   switchBusiness,
-  getBusinessStats
+  getBusinessStats,
+  getAllBusinesses, // New function for admin
+  activateBusiness // New function for admin
 } from "../controllers/businessController.js";
-import { protect, merchantOnly } from "../middleware/authMiddleware.js";
+import { protect, merchantOnly, adminOnly } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
@@ -54,6 +56,14 @@ router.post("/switch", businessLimiter, protect, merchantOnly, switchBusiness);
 
 // GET /api/business/:businessId/stats - Get business statistics
 router.get("/:businessId/stats", businessLimiter, protect, merchantOnly, getBusinessStats);
+
+// ========== ADMIN ROUTES ==========
+
+// GET /api/business/admin/all - Get all businesses (Admin only)
+router.get("/admin/all", businessLimiter, protect, adminOnly, getAllBusinesses);
+
+// PATCH /api/business/admin/activate/:businessId - Activate business (Admin only)
+router.patch("/admin/activate/:businessId", businessLimiter, protect, adminOnly, activateBusiness);
 
 // Health check for business routes
 router.get("/health", (req, res) => {

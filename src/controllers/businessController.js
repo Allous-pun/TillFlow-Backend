@@ -362,3 +362,159 @@ export const getBusinessStats = async (req, res) => {
     });
   }
 };
+
+// Get all businesses for admin (both active and inactive)
+export const getAllBusinesses = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, isActive } = req.query;
+    
+    // Build filter
+    const filter = {};
+    if (isActive !== undefined) {
+      filter.isActive = isActive === 'true';
+    }
+
+    const businesses = await Business.find(filter)
+      .populate('owner', 'fullName email phoneNumber') // Only basic owner info
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit))
+      .exec();
+
+    const total = await Business.countDocuments(filter);
+
+    // Return limited business info without sensitive data
+    const businessList = businesses.map(business => ({
+      id: business._id,
+      businessName: business.businessName,
+      shortCode: business.mpesaShortCode,
+      businessType: business.businessType,
+      industry: business.industry,
+      contactEmail: business.contactEmail,
+      contactPhone: business.contactPhone,
+      isActive: business.isActive,
+      owner: {
+        id: business.owner._id,
+        fullName: business.owner.fullName,
+        email: business.owner.email,
+        phoneNumber: business.owner.phoneNumber
+      },
+      createdAt: business.createdAt,
+      updatedAt: business.updatedAt
+    }));
+
+    res.json({
+      success: true,
+      data: businessList,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+
+  } catch (error) {
+    console.error('Get all businesses error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching businesses",
+      error: error.message
+    });
+  }
+};
+
+// Activate business (Admin only)
+export const activateBusiness = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const { ownerEmail, adminSecretKey } = req.body;
+
+    // Validate admin secret key
+    if (!adminSecretKey || adminSecretKey !== process.env.ADMIN_SECRET_KEY) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid admin secret key"
+      });
+    }
+
+    // Validate owner email
+    if (!ownerEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Owner email is required"
+      });
+    }
+
+    // Find business
+    const business = await Business.findById(businessId)
+      .populate('owner', 'email');
+    
+    if (!business) {
+      return res.status(404).json({
+        success: false,
+        message: "Business not found"
+      });
+    }
+
+    // Verify owner email matches
+    if (business.owner.email !== ownerEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Owner email does not match business owner"
+      });
+    }
+
+    // Check if business is already active
+    if (business.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: "Business is already active"
+      });
+    }
+
+    // Activate business
+    business.isActive = true;
+    business.updatedAt = new Date();
+    await business.save();
+
+    // Add business back to user's businesses array if not already there
+    await User.findByIdAndUpdate(
+      business.owner._id,
+      { 
+        $addToSet: { businesses: business._id }
+      }
+    );
+
+    res.json({
+      success: true,
+      message: "Business activated successfully",
+      business: {
+        id: business._id,
+        businessName: business.businessName,
+        shortCode: business.mpesaShortCode,
+        isActive: business.isActive,
+        owner: {
+          id: business.owner._id,
+          email: business.owner.email
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Activate business error:', error);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid business ID"
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Server error while activating business",
+      error: error.message
+    });
+  }
+};
