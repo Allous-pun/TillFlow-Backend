@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import userRoutes from "./routes/userRoutes.js";
 import mpesaRoutes from "./routes/mpesaRoutes.js";
-import mpesaService from "./services/mpesaService.js"; // ADD THIS IMPORT
+import mpesaService from "./services/mpesaService.js";
 import manualTransactionRoutes from "./routes/manualTransactionRoutes.js";
 import businessRoutes from "./routes/businessRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
@@ -10,6 +10,7 @@ import categoryRuleRoutes from "./routes/categoryRuleRoutes.js";
 import tokenRoutes from './routes/tokenRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import contactRoutes from './routes/contactRoutes.js'; // Fixed: Use import instead of require
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.use("/api/category-rule", categoryRuleRoutes);
 app.use("/api/tokens", tokenRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/contact", contactRoutes); // Fixed: Use the imported contactRoutes
 
 // Health check route
 app.get("/api/health", (req, res) => {
