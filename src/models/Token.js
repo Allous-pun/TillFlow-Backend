@@ -72,6 +72,13 @@ const tokenSchema = new mongoose.Schema({
     default: null
   },
 
+  // Business assignment
+  business: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Business",
+    default: null
+  },
+
   // Metadata
   createdAt: {
     type: Date,
@@ -97,7 +104,7 @@ tokenSchema.virtual('formattedPrice').get(function() {
 tokenSchema.virtual('isActive').get(function() {
   return this.status === 'active' && 
          (!this.expiresAt || this.expiresAt > new Date()) &&
-         this.hasRemainingTransactions();
+         this.hasRemainingTransactions;
 });
 
 // Virtual for checking transaction limits
@@ -118,6 +125,37 @@ tokenSchema.virtual('daysRemaining').get(function() {
   const diffTime = this.expiresAt - now;
   return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 });
+
+// Static Methods
+tokenSchema.statics = {
+  // Find active token by business
+  findActiveByBusiness(businessId) {
+    return this.findOne({ 
+      business: businessId, 
+      status: 'active' 
+    }).populate('plan').populate('business');
+  },
+
+  // Find token by value
+  findByValue(tokenValue) {
+    return this.findOne({ tokenValue }).populate('plan').populate('business');
+  },
+
+  // Increment token usage
+  async incrementUsage(tokenId, amount = 0) {
+    const amountInCents = Math.round(amount * 100);
+    return this.findByIdAndUpdate(
+      tokenId,
+      {
+        $inc: {
+          transactionsUsed: 1,
+          revenueUsed: amountInCents
+        }
+      },
+      { new: true }
+    ).populate('plan');
+  }
+};
 
 // Methods
 tokenSchema.methods = {
@@ -171,8 +209,9 @@ tokenSchema.methods = {
   async activate() {
     this.activatedAt = new Date();
     
-    const plan = this.populated('plan') || this.plan;
-    if (plan.duration > 0) {
+    // Get the plan to calculate expiry
+    const plan = await mongoose.model('TokenPlan').findById(this.plan);
+    if (plan && plan.duration > 0) {
       const expiry = new Date();
       expiry.setDate(expiry.getDate() + plan.duration);
       this.expiresAt = expiry;
@@ -183,18 +222,55 @@ tokenSchema.methods = {
     return this;
   },
 
+  // Revoke token
+  async revoke(reason = 'Admin action') {
+    this.status = 'revoked';
+    this.updatedAt = new Date();
+    await this.save();
+    return this;
+  },
+
   getSummary() {
-    const plan = this.populated('plan') || this.plan;
+    // Safely get plan summary - handle both populated and unpopulated plan
+    let planSummary = null;
+    if (this.plan) {
+      if (typeof this.plan === 'object' && this.plan.getSummary) {
+        // Plan is populated and has getSummary method
+        planSummary = this.plan.getSummary();
+      } else {
+        // Plan is just an ObjectId or doesn't have getSummary
+        planSummary = {
+          id: this.plan._id || this.plan,
+          name: 'Plan Details Not Available',
+          description: 'Plan details need to be populated'
+        };
+      }
+    }
+
+    // Safely get business summary
+    let businessSummary = null;
+    if (this.business) {
+      if (typeof this.business === 'object') {
+        businessSummary = {
+          id: this.business._id,
+          businessName: this.business.businessName,
+          mpesaShortCode: this.business.mpesaShortCode,
+          businessType: this.business.businessType
+        };
+      }
+    }
+
     return {
       id: this._id,
       tokenValue: this.tokenValue,
-      plan: plan ? plan.getSummary() : null,
+      plan: planSummary,
+      business: businessSummary,
       price: this.price,
       formattedPrice: this.formattedPrice,
       transactionLimit: this.transactionLimit,
       revenueLimit: this.revenueLimit,
       transactionsUsed: this.transactionsUsed,
-      revenueUsed: this.revenueUsed / 100,
+      revenueUsed: this.revenueUsed / 100, // Convert back to currency
       status: this.status,
       isActive: this.isActive,
       usagePercentage: this.usagePercentage,
