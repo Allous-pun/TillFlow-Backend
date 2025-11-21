@@ -133,3 +133,25 @@ export const checkExpiredSubscriptions = async (req, res) => {
     });
   }
 };
+
+// DEPRECATED - Remove these old functions
+export const enableAutoRenew = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'This endpoint is deprecated. Auto-renewal is not supported in the new model.'
+  });
+};
+
+export const disableAutoRenew = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'This endpoint is deprecated. Auto-renewal is not supported in the new model.'
+  });
+};
+
+export const getTokenStatus = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'This endpoint is deprecated. Use token status endpoints instead.'
+  });
+};
