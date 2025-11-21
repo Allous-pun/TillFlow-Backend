@@ -62,7 +62,33 @@ class NotificationService {
     }
   }
 
-  // Get notifications for user
+  // Get notification by ID (admin)
+  async getNotificationById(notificationId) {
+    try {
+      const notification = await Notification.findById(notificationId)
+        .populate('createdBy', 'fullName email')
+        .populate('targetBusinesses', 'businessName mpesaShortCode')
+        .populate('readBy.user', 'fullName email');
+
+      if (!notification) {
+        throw new Error('Notification not found');
+      }
+
+      return {
+        success: true,
+        notification: notification.getFullDetails()
+      };
+
+    } catch (error) {
+      console.error('Get notification by ID error:', error);
+      return {
+        success: false,
+        message: error.message
+      };
+    }
+  }
+
+  // Get notifications for user (merchant)
   async getUserNotifications(userId, businessId = null, options = {}) {
     try {
       const { page = 1, limit = 20, unreadOnly = false } = options;
@@ -107,7 +133,7 @@ class NotificationService {
     }
   }
 
-  // Mark notification as read
+  // Mark notification as read (merchant)
   async markAsRead(notificationId, userId) {
     try {
       const notification = await Notification.markAsRead(notificationId, userId);
@@ -131,7 +157,7 @@ class NotificationService {
     }
   }
 
-  // Mark all notifications as read
+  // Mark all notifications as read (merchant)
   async markAllAsRead(userId, businessId = null) {
     try {
       const markedCount = await Notification.markAllAsRead(userId, businessId);
@@ -157,6 +183,7 @@ class NotificationService {
       const totalNotifications = await Notification.countDocuments();
       const activeNotifications = await Notification.countDocuments({ status: 'active' });
       const scheduledNotifications = await Notification.countDocuments({ status: 'scheduled' });
+      const draftNotifications = await Notification.countDocuments({ status: 'draft' });
       
       const typeStats = await Notification.aggregate([
         {
@@ -176,17 +203,31 @@ class NotificationService {
         }
       ]);
 
+      const audienceStats = await Notification.aggregate([
+        {
+          $group: {
+            _id: '$audience',
+            count: { $sum: 1 }
+          }
+        }
+      ]);
+
       return {
         success: true,
         stats: {
           total: totalNotifications,
           active: activeNotifications,
           scheduled: scheduledNotifications,
+          draft: draftNotifications,
           byType: typeStats.reduce((acc, stat) => {
             acc[stat._id] = stat.count;
             return acc;
           }, {}),
           byPriority: priorityStats.reduce((acc, stat) => {
+            acc[stat._id] = stat.count;
+            return acc;
+          }, {}),
+          byAudience: audienceStats.reduce((acc, stat) => {
             acc[stat._id] = stat.count;
             return acc;
           }, {})
@@ -289,10 +330,6 @@ class NotificationService {
         throw new Error('Notification not found');
       }
 
-      if (notification.status === 'active') {
-        throw new Error('Cannot delete active notification');
-      }
-
       await Notification.findByIdAndDelete(notificationId);
 
       return {
@@ -322,6 +359,7 @@ class NotificationService {
       const notifications = await Notification.find(filter)
         .populate('createdBy', 'fullName email')
         .populate('targetBusinesses', 'businessName mpesaShortCode')
+        .populate('readBy.user', 'fullName email')
         .sort({ createdAt: -1 })
         .limit(parseInt(limit))
         .skip((parseInt(page) - 1) * parseInt(limit))

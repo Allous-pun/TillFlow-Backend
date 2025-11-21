@@ -1,5 +1,7 @@
 import NotificationService from '../services/notificationService.js';
 
+// 🔐 ADMIN ROUTES
+
 // Admin: Create notification
 export const createNotification = async (req, res) => {
   try {
@@ -52,7 +54,7 @@ export const createNotification = async (req, res) => {
   }
 };
 
-// Admin: Get all notifications
+// Admin: Get all notifications (with filters)
 export const getAllNotifications = async (req, res) => {
   try {
     const { page = 1, limit = 50, status, type, audience } = req.query;
@@ -76,6 +78,29 @@ export const getAllNotifications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching notifications',
+      error: error.message
+    });
+  }
+};
+
+// Admin: Get specific notification details
+export const getNotification = async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+
+    const result = await NotificationService.getNotificationById(notificationId);
+
+    if (!result.success) {
+      return res.status(404).json(result);
+    }
+
+    res.json(result);
+
+  } catch (error) {
+    console.error('Get notification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching notification',
       error: error.message
     });
   }
@@ -171,6 +196,8 @@ export const getNotificationStats = async (req, res) => {
     });
   }
 };
+
+// 👨‍💼 MERCHANT ROUTES
 
 // Merchant: Get my notifications
 export const getMyNotifications = async (req, res) => {
