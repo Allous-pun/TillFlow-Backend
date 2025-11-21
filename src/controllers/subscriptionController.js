@@ -41,7 +41,7 @@ export const getBusinessSubscription = async (req, res) => {
       });
     }
 
-    const result = await SubscriptionService.getMerchantSubscription(businessId);
+    const result = await SubscriptionService.getBusinessSubscription(businessId);
 
     res.json(result);
 
@@ -90,110 +90,6 @@ export const cancelSubscription = async (req, res) => {
   }
 };
 
-// Merchant: Enable auto-renewal
-export const enableAutoRenew = async (req, res) => {
-  try {
-    const { businessId } = req.params;
-    const userId = req.user.id;
-
-    // Verify business belongs to user
-    const Business = await import('../models/Business.js').then(mod => mod.default);
-    const business = await Business.findOne({ _id: businessId, owner: userId });
-    
-    if (!business) {
-      return res.status(403).json({
-        success: false,
-        message: 'Business not found or you do not have permission'
-      });
-    }
-
-    const result = await SubscriptionService.enableAutoRenew(businessId);
-
-    if (!result.success) {
-      return res.status(400).json(result);
-    }
-
-    res.json(result);
-
-  } catch (error) {
-    console.error('Enable auto-renewal error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while enabling auto-renewal',
-      error: error.message
-    });
-  }
-};
-
-// Merchant: Disable auto-renewal
-export const disableAutoRenew = async (req, res) => {
-  try {
-    const { businessId } = req.params;
-    const userId = req.user.id;
-
-    // Verify business belongs to user
-    const Business = await import('../models/Business.js').then(mod => mod.default);
-    const business = await Business.findOne({ _id: businessId, owner: userId });
-    
-    if (!business) {
-      return res.status(403).json({
-        success: false,
-        message: 'Business not found or you do not have permission'
-      });
-    }
-
-    const result = await SubscriptionService.disableAutoRenew(businessId);
-
-    if (!result.success) {
-      return res.status(400).json(result);
-    }
-
-    res.json(result);
-
-  } catch (error) {
-    console.error('Disable auto-renewal error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while disabling auto-renewal',
-      error: error.message
-    });
-  }
-};
-
-// Merchant: Get token status for business
-export const getTokenStatus = async (req, res) => {
-  try {
-    const { businessId } = req.params;
-    const userId = req.user.id;
-
-    // Verify business belongs to user
-    const Business = await import('../models/Business.js').then(mod => mod.default);
-    const business = await Business.findOne({ _id: businessId, owner: userId });
-    
-    if (!business) {
-      return res.status(403).json({
-        success: false,
-        message: 'Business not found or you do not have permission'
-      });
-    }
-
-    const result = await TokenService.getBusinessTokenStatus(businessId);
-
-    res.json({
-      success: true,
-      ...result
-    });
-
-  } catch (error) {
-    console.error('Get token status error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching token status',
-      error: error.message
-    });
-  }
-};
-
 // Admin: Get all subscriptions
 export const getAllSubscriptions = async (req, res) => {
   try {
@@ -237,37 +133,3 @@ export const checkExpiredSubscriptions = async (req, res) => {
     });
   }
 };
-
-// Add this method to SubscriptionService and import it
-const getSubscriptionsByUser = async (userId) => {
-  try {
-    const subscriptions = await Subscription.findByUser(userId);
-    
-    // Get token status for each subscription
-    const subscriptionsWithStatus = await Promise.all(
-      subscriptions.map(async (subscription) => {
-        const tokenStatus = await TokenService.getBusinessTokenStatus(subscription.business._id);
-        return {
-          subscription: subscription.getSummary(),
-          tokenStatus
-        };
-      })
-    );
-
-    return {
-      success: true,
-      subscriptions: subscriptionsWithStatus,
-      count: subscriptionsWithStatus.length
-    };
-
-  } catch (error) {
-    console.error('Get subscriptions by user error:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-};
-
-// Update the SubscriptionService import to include this method
-export { getSubscriptionsByUser };

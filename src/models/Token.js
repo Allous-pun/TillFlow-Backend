@@ -1,3 +1,4 @@
+// src/models/Token.js
 import mongoose from "mongoose";
 import crypto from "crypto";
 
@@ -7,35 +8,37 @@ const tokenSchema = new mongoose.Schema({
     type: String,
     required: [true, "Token value is required"],
     unique: true,
-    //index: true,
     default: function() {
       return `TKN-${crypto.randomBytes(16).toString('hex').toUpperCase()}`;
     }
   },
 
-  // Relationships
+  // Plan relationship (template)
   plan: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "TokenPlan",
     required: true
   },
 
-  business: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Business",
-    required: true
+  // PRICING AND LIMITS - MOVED FROM TokenPlan TO HERE
+  price: {
+    type: Number, // Price in cents (KES)
+    required: [true, "Price is required"],
+    min: [0, "Price cannot be negative"],
+    default: 0
   },
 
-  // Subscription Details
-  startDate: {
-    type: Date,
-    required: true,
-    default: Date.now
+  transactionLimit: {
+    type: Number,
+    required: [true, "Transaction limit is required"],
+    min: [0, "Transaction limit cannot be negative"],
+    default: 0 // 0 = unlimited
   },
 
-  expiryDate: {
-    type: Date,
-    required: true
+  revenueLimit: {
+    type: Number, // Maximum revenue allowed in cents
+    min: [0, "Revenue limit cannot be negative"],
+    default: 0 // 0 = unlimited
   },
 
   // Usage Tracking
@@ -51,18 +54,22 @@ const tokenSchema = new mongoose.Schema({
     min: 0
   },
 
-  // Status
+  // Token Status
   status: {
     type: String,
     enum: ['active', 'expired', 'suspended', 'revoked'],
-    default: 'active',
-    index: true
+    default: 'active'
   },
 
-  // Payment Reference (if paid)
-  paymentReference: {
-    type: String,
-    sparse: true
+  // Activation dates
+  activatedAt: {
+    type: Date,
+    default: null
+  },
+
+  expiresAt: {
+    type: Date,
+    default: null
   },
 
   // Metadata
@@ -81,121 +88,47 @@ const tokenSchema = new mongoose.Schema({
   toJSON: { virtuals: true }
 });
 
-// Virtual for checking if token is active
-tokenSchema.virtual('isActive').get(function() {
-  return this.status === 'active' && this.expiryDate > new Date();
+// ADD formattedPrice virtual to Token
+tokenSchema.virtual('formattedPrice').get(function() {
+  return this.price === 0 ? 'Free' : `KES ${(this.price / 100).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
 });
 
-// Virtual for days remaining
-tokenSchema.virtual('daysRemaining').get(function() {
-  const now = new Date();
-  const diffTime = this.expiryDate - now;
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return Math.max(0, diffDays);
+// Virtual for checking if token is active
+tokenSchema.virtual('isActive').get(function() {
+  return this.status === 'active' && 
+         (!this.expiresAt || this.expiresAt > new Date()) &&
+         this.hasRemainingTransactions();
+});
+
+// Virtual for checking transaction limits
+tokenSchema.virtual('hasRemainingTransactions').get(function() {
+  return this.transactionLimit === 0 || this.transactionsUsed < this.transactionLimit;
 });
 
 // Virtual for usage percentage
 tokenSchema.virtual('usagePercentage').get(function() {
-  const plan = this.populated('plan') || this.plan;
-  if (!plan || plan.transactionLimit === 0) return 0;
-  return Math.min(100, (this.transactionsUsed / plan.transactionLimit) * 100);
+  if (this.transactionLimit === 0) return 0;
+  return Math.min(100, (this.transactionsUsed / this.transactionLimit) * 100);
 });
 
-// Indexes for performance
-tokenSchema.index({ business: 1, status: 1 });
-tokenSchema.index({ expiryDate: 1 });
-//tokenSchema.index({ tokenValue: 1 }, { unique: true });
-tokenSchema.index({ createdAt: -1 });
-
-// Pre-save middleware to set expiry date
-tokenSchema.pre('save', function(next) {
-  if (this.isModified('startDate') || this.isNew) {
-    const plan = this.populated('plan') || this.plan;
-    if (plan && plan.duration) {
-      const expiry = new Date(this.startDate);
-      expiry.setDate(expiry.getDate() + plan.duration);
-      this.expiryDate = expiry;
-    }
-  }
-  this.updatedAt = new Date();
-  next();
+// Virtual for days remaining (if time-based)
+tokenSchema.virtual('daysRemaining').get(function() {
+  if (!this.expiresAt) return null;
+  const now = new Date();
+  const diffTime = this.expiresAt - now;
+  return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 });
 
-// Static Methods
-tokenSchema.statics = {
-  // Find active token by value
-  findByValue(tokenValue) {
-    return this.findOne({ tokenValue, status: 'active' })
-      .populate('plan')
-      .populate('business', 'businessName mpesaShortCode businessType owner')
-      .exec();
-  },
-
-  // Find active tokens for business
-  findActiveByBusiness(businessId) {
-    return this.findOne({ 
-      business: businessId, 
-      status: 'active',
-      expiryDate: { $gt: new Date() }
-    })
-    .populate('plan')
-    .sort({ expiryDate: -1 })
-    .exec();
-  },
-
-  // Find all tokens for business
-  findByBusiness(businessId, options = {}) {
-    const { page = 1, limit = 50, status } = options;
-    const skip = (page - 1) * limit;
-
-    const filter = { business: businessId };
-    if (status) filter.status = status;
-
-    return this.find(filter)
-      .populate('plan')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .exec();
-  },
-
-  // Update token usage
-  async incrementUsage(tokenId, amount) {
-    const update = { 
-      $inc: { 
-        transactionsUsed: 1,
-        revenueUsed: Math.round(amount * 100) // Convert to cents
-      } 
-    };
-
-    return this.findByIdAndUpdate(
-      tokenId,
-      update,
-      { new: true }
-    ).populate('plan').exec();
-  }
-};
-
-// Instance Methods
+// Methods
 tokenSchema.methods = {
-  // Check if token can be used (within limits)
-  canUse(amount = 0) {
-    // Check if token is active
+  // Check if token can be used for a transaction
+  canProcessTransaction(amount = 0) {
     if (!this.isActive) {
       return { canUse: false, reason: 'Token is not active' };
     }
-
-    // Check if token is expired by time
-    if (this.expiryDate <= new Date()) {
-      this.status = 'expired';
-      this.save().catch(console.error);
-      return { canUse: false, reason: 'Token has expired' };
-    }
-
-    const plan = this.populated('plan') || this.plan;
     
     // Check transaction limit
-    if (plan.transactionLimit > 0 && this.transactionsUsed >= plan.transactionLimit) {
+    if (this.transactionLimit > 0 && this.transactionsUsed >= this.transactionLimit) {
       this.status = 'expired';
       this.save().catch(console.error);
       return { canUse: false, reason: 'Transaction limit reached' };
@@ -203,7 +136,7 @@ tokenSchema.methods = {
 
     // Check revenue limit
     const amountInCents = Math.round(amount * 100);
-    if (plan.revenueLimit > 0 && (this.revenueUsed + amountInCents) > plan.revenueLimit) {
+    if (this.revenueLimit > 0 && (this.revenueUsed + amountInCents) > this.revenueLimit) {
       this.status = 'expired';
       this.save().catch(console.error);
       return { canUse: false, reason: 'Revenue limit reached' };
@@ -212,44 +145,64 @@ tokenSchema.methods = {
     return { canUse: true };
   },
 
-  // Get token summary
+  // Process a transaction
+  async processTransaction(amount = 0) {
+    const canUse = this.canProcessTransaction(amount);
+    if (!canUse.canUse) {
+      return canUse;
+    }
+
+    const amountInCents = Math.round(amount * 100);
+    
+    this.transactionsUsed += 1;
+    this.revenueUsed += amountInCents;
+    
+    // Check if we just reached the limit
+    if ((this.transactionLimit > 0 && this.transactionsUsed >= this.transactionLimit) ||
+        (this.revenueLimit > 0 && this.revenueUsed >= this.revenueLimit)) {
+      this.status = 'expired';
+    }
+
+    await this.save();
+    return { success: true, token: this };
+  },
+
+  // Activate token (when merchant subscribes)
+  async activate() {
+    this.activatedAt = new Date();
+    
+    const plan = this.populated('plan') || this.plan;
+    if (plan.duration > 0) {
+      const expiry = new Date();
+      expiry.setDate(expiry.getDate() + plan.duration);
+      this.expiresAt = expiry;
+    }
+    
+    this.status = 'active';
+    await this.save();
+    return this;
+  },
+
   getSummary() {
     const plan = this.populated('plan') || this.plan;
     return {
       id: this._id,
       tokenValue: this.tokenValue,
       plan: plan ? plan.getSummary() : null,
-      startDate: this.startDate,
-      expiryDate: this.expiryDate,
+      price: this.price,
+      formattedPrice: this.formattedPrice,
+      transactionLimit: this.transactionLimit,
+      revenueLimit: this.revenueLimit,
       transactionsUsed: this.transactionsUsed,
-      revenueUsed: this.revenueUsed / 100, // Convert back to currency units
+      revenueUsed: this.revenueUsed / 100,
       status: this.status,
       isActive: this.isActive,
-      daysRemaining: this.daysRemaining,
       usagePercentage: this.usagePercentage,
+      daysRemaining: this.daysRemaining,
+      activatedAt: this.activatedAt,
+      expiresAt: this.expiresAt,
       createdAt: this.createdAt
     };
-  },
-
-  // Suspend token
-  suspend() {
-    this.status = 'suspended';
-    return this.save();
-  },
-
-  // Revoke token
-  revoke() {
-    this.status = 'revoked';
-    return this.save();
-  },
-
-  // Reactivate token
-  reactivate() {
-    if (this.expiryDate > new Date()) {
-      this.status = 'active';
-      return this.save();
-    }
-    throw new Error('Cannot reactivate expired token');
   }
 };
 

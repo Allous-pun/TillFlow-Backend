@@ -1,3 +1,4 @@
+// src/models/TokenPlan.js
 import mongoose from "mongoose";
 
 const tokenPlanSchema = new mongoose.Schema({
@@ -15,32 +16,11 @@ const tokenPlanSchema = new mongoose.Schema({
     maxlength: [500, "Description cannot exceed 500 characters"]
   },
 
-  // Duration & Pricing
+  // Duration ONLY - no pricing/limits here
   duration: {
     type: Number, // Duration in days
     required: [true, "Duration is required"],
     min: [1, "Duration must be at least 1 day"]
-  },
-
-  price: {
-    type: Number, // Price in cents (KES)
-    required: [true, "Price is required"],
-    min: [0, "Price cannot be negative"],
-    default: 0
-  },
-
-  // Usage Limits
-  transactionLimit: {
-    type: Number,
-    required: [true, "Transaction limit is required"],
-    min: [0, "Transaction limit cannot be negative"],
-    default: 0 // 0 = unlimited
-  },
-
-  revenueLimit: {
-    type: Number, // Maximum revenue allowed in cents
-    min: [0, "Revenue limit cannot be negative"],
-    default: 0 // 0 = unlimited
   },
 
   // Features
@@ -92,10 +72,8 @@ const tokenPlanSchema = new mongoose.Schema({
   toJSON: { virtuals: true }
 });
 
-// Virtual for formatted price
-tokenPlanSchema.virtual('formattedPrice').get(function() {
-  return this.price === 0 ? 'Free' : `KES ${(this.price / 100).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
-});
+// REMOVED: formattedPrice virtual (no price in plan)
+// REMOVED: formattedDuration virtual (we'll keep this)
 
 // Virtual for formatted duration
 tokenPlanSchema.virtual('formattedDuration').get(function() {
@@ -112,7 +90,7 @@ tokenPlanSchema.statics = {
   // Find active public plans for merchants
   findActivePlans() {
     return this.find({ isActive: true, isPublic: true })
-      .sort({ price: 1, duration: 1 })
+      .sort({ duration: 1 })
       .populate('createdBy', 'fullName email')
       .exec();
   },
@@ -136,10 +114,6 @@ tokenPlanSchema.methods = {
       description: this.description,
       duration: this.duration,
       formattedDuration: this.formattedDuration,
-      price: this.price,
-      formattedPrice: this.formattedPrice,
-      transactionLimit: this.transactionLimit,
-      revenueLimit: this.revenueLimit,
       features: this.features,
       isActive: this.isActive,
       isPublic: this.isPublic,

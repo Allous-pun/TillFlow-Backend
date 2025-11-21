@@ -1,11 +1,11 @@
 import express from 'express';
 import {
+  // Merchant Routes
   getMySubscriptions,
   getBusinessSubscription,
   cancelSubscription,
-  enableAutoRenew,
-  disableAutoRenew,
-  getTokenStatus,
+  
+  // Admin Routes
   getAllSubscriptions,
   checkExpiredSubscriptions
 } from '../controllers/subscriptionController.js';
@@ -17,9 +17,6 @@ const router = express.Router();
 router.get('/my-subscriptions', protect, merchantOnly, getMySubscriptions);
 router.get('/business/:businessId', protect, merchantOnly, getBusinessSubscription);
 router.put('/business/:businessId/cancel', protect, merchantOnly, cancelSubscription);
-router.put('/business/:businessId/auto-renew/enable', protect, merchantOnly, enableAutoRenew);
-router.put('/business/:businessId/auto-renew/disable', protect, merchantOnly, disableAutoRenew);
-router.get('/business/:businessId/token-status', protect, merchantOnly, getTokenStatus);
 
 // 🔐 ADMIN ROUTES - Subscription Overview
 router.get('/admin/all', protect, adminOnly, getAllSubscriptions);

@@ -115,7 +115,7 @@ export const requireTokenAdmin = (req, res, next) => {
   next();
 };
 
-// Optional: Middleware to attach token to response for merchant endpoints
+// Optional: Middleware to attach token status to response for merchant endpoints
 export const attachTokenStatus = async (req, res, next) => {
   try {
     const businessId = req.business?._id || req.params.businessId;

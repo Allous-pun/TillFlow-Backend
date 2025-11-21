@@ -3,25 +3,22 @@ import Token from '../models/Token.js';
 import TokenService from '../services/tokenService.js';
 import SubscriptionService from '../services/subscriptionService.js';
 
-// Admin: Create a new token plan
+// Admin: Create a new token plan (template without pricing)
 export const createTokenPlan = async (req, res) => {
   try {
     const {
       name,
       description,
       duration,
-      price,
-      transactionLimit,
-      revenueLimit,
       features,
-      isPublic
+      isPublic = true
     } = req.body;
 
     // Validate required fields
-    if (!name || !duration || price === undefined) {
+    if (!name || !duration) {
       return res.status(400).json({
         success: false,
-        message: 'Name, duration, and price are required fields'
+        message: 'Name and duration are required fields'
       });
     }
 
@@ -30,11 +27,8 @@ export const createTokenPlan = async (req, res) => {
       name,
       description,
       duration: parseInt(duration),
-      price: parseInt(price),
-      transactionLimit: transactionLimit ? parseInt(transactionLimit) : 0,
-      revenueLimit: revenueLimit ? parseInt(revenueLimit) : 0,
       features: features || [],
-      isPublic: isPublic !== undefined ? isPublic : true,
+      isPublic,
       createdBy: req.user.id
     });
 
@@ -122,8 +116,7 @@ export const updateTokenPlan = async (req, res) => {
 
     // Update fields
     const allowedFields = [
-      'name', 'description', 'duration', 'price', 'transactionLimit',
-      'revenueLimit', 'features', 'isActive', 'isPublic'
+      'name', 'description', 'duration', 'features', 'isActive', 'isPublic'
     ];
 
     allowedFields.forEach(field => {
@@ -160,21 +153,77 @@ export const updateTokenPlan = async (req, res) => {
   }
 };
 
-// Admin: Generate token for a business
-export const generateTokenForBusiness = async (req, res) => {
+// Admin: Delete token plan (soft delete)
+export const deleteTokenPlan = async (req, res) => {
   try {
-    const { planId, businessId } = req.body;
+    const { planId } = req.params;
 
-    if (!planId || !businessId) {
-      return res.status(400).json({
+    const plan = await TokenPlan.findById(planId);
+    if (!plan) {
+      return res.status(404).json({
         success: false,
-        message: 'Plan ID and Business ID are required'
+        message: 'Token plan not found'
       });
     }
 
-    const result = await TokenService.generateToken(planId, businessId, {
-      reference: `ADMIN-${req.user.id}-${Date.now()}`,
-      adminGenerated: true
+    // Check if there are active tokens using this plan
+    const activeTokens = await Token.countDocuments({ 
+      plan: planId, 
+      status: 'active' 
+    });
+
+    if (activeTokens > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete plan. There are ${activeTokens} active tokens using this plan.`
+      });
+    }
+
+    // Instead of deleting, we deactivate and hide
+    plan.isActive = false;
+    plan.isPublic = false;
+    await plan.save();
+
+    res.json({
+      success: true,
+      message: 'Token plan deactivated successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete token plan error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deleting token plan',
+      error: error.message
+    });
+  }
+};
+
+// Admin: Create a token with pricing and limits
+export const createToken = async (req, res) => {
+  try {
+    const {
+      planId,
+      price,
+      transactionLimit = 0,
+      revenueLimit = 0,
+      businessId = null
+    } = req.body;
+
+    if (!planId || price === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Plan ID and price are required'
+      });
+    }
+
+    const result = await TokenService.createToken({
+      planId,
+      price: parseInt(price),
+      transactionLimit: parseInt(transactionLimit),
+      revenueLimit: parseInt(revenueLimit),
+      businessId,
+      createdBy: req.user.id
     });
 
     if (!result.success) {
@@ -184,22 +233,113 @@ export const generateTokenForBusiness = async (req, res) => {
     res.status(201).json(result);
 
   } catch (error) {
-    console.error('Generate token for business error:', error);
+    console.error('Create token error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while generating token',
+      message: 'Server error while creating token',
       error: error.message
     });
   }
 };
 
-// Admin: Revoke token
-export const revokeToken = async (req, res) => {
+// Admin: Get all tokens
+export const getAllTokens = async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 50, 
+      status, 
+      businessId, 
+      planId,
+      activeOnly = false
+    } = req.query;
+
+    let filter = {};
+    
+    if (status) filter.status = status;
+    if (businessId) filter.business = businessId;
+    if (planId) filter.plan = planId;
+    if (activeOnly === 'true') filter.status = 'active';
+
+    const tokens = await Token.find(filter)
+      .populate('plan')
+      .populate('business', 'businessName mpesaShortCode businessType owner')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit))
+      .exec();
+
+    const total = await Token.countDocuments(filter);
+
+    res.json({
+      success: true,
+      tokens: tokens.map(token => token.getSummary()),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+
+  } catch (error) {
+    console.error('Get all tokens error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching tokens',
+      error: error.message
+    });
+  }
+};
+
+// Admin: Update token
+export const updateToken = async (req, res) => {
   try {
     const { tokenId } = req.params;
-    const { reason } = req.body;
+    const updateData = req.body;
 
-    const result = await TokenService.revokeToken(tokenId, reason);
+    const token = await Token.findById(tokenId);
+    if (!token) {
+      return res.status(404).json({
+        success: false,
+        message: 'Token not found'
+      });
+    }
+
+    // Only allow updating certain fields
+    const allowedFields = ['price', 'transactionLimit', 'revenueLimit', 'status'];
+    
+    allowedFields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        token[field] = updateData[field];
+      }
+    });
+
+    token.updatedAt = new Date();
+    await token.save();
+
+    res.json({
+      success: true,
+      message: 'Token updated successfully',
+      token: token.getSummary()
+    });
+
+  } catch (error) {
+    console.error('Update token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating token',
+      error: error.message
+    });
+  }
+};
+
+// Admin: Activate token
+export const activateToken = async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+
+    const result = await TokenService.activateToken(tokenId);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -208,10 +348,71 @@ export const revokeToken = async (req, res) => {
     res.json(result);
 
   } catch (error) {
-    console.error('Revoke token error:', error);
+    console.error('Activate token error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while revoking token',
+      message: 'Server error while activating token',
+      error: error.message
+    });
+  }
+};
+
+// Admin: Deactivate token
+export const deactivateToken = async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+    const { reason } = req.body;
+
+    const result = await TokenService.deactivateToken(tokenId, reason);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+
+  } catch (error) {
+    console.error('Deactivate token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deactivating token',
+      error: error.message
+    });
+  }
+};
+
+// Admin: Delete token
+export const deleteToken = async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+
+    const token = await Token.findById(tokenId);
+    if (!token) {
+      return res.status(404).json({
+        success: false,
+        message: 'Token not found'
+      });
+    }
+
+    if (token.status === 'active') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete active token. Deactivate it first.'
+      });
+    }
+
+    await Token.findByIdAndDelete(tokenId);
+
+    res.json({
+      success: true,
+      message: 'Token deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deleting token',
       error: error.message
     });
   }
@@ -246,81 +447,16 @@ export const getTokenAnalytics = async (req, res) => {
   }
 };
 
-// Admin: Get all tokens across all businesses
-export const getAllTokens = async (req, res) => {
-  try {
-    const { page = 1, limit = 50, status, businessId, planId } = req.query;
-
-    let filter = {};
-    
-    // Apply filters if provided
-    if (status) filter.status = status;
-    if (businessId) filter.business = businessId;
-    if (planId) filter.plan = planId;
-
-    const tokens = await Token.find(filter)
-      .populate('plan')
-      .populate('business', 'businessName mpesaShortCode businessType owner')
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .exec();
-
-    const total = await Token.countDocuments(filter);
-
-    // Format response
-    const formattedTokens = tokens.map(token => ({
-      id: token._id,
-      tokenValue: token.tokenValue,
-      plan: token.plan ? token.plan.getFullDetails() : null,
-      business: token.business ? {
-        id: token.business._id,
-        businessName: token.business.businessName,
-        mpesaShortCode: token.business.mpesaShortCode,
-        businessType: token.business.businessType
-      } : null,
-      startDate: token.startDate,
-      expiryDate: token.expiryDate,
-      transactionsUsed: token.transactionsUsed,
-      revenueUsed: token.revenueUsed / 100, // Convert back to currency
-      status: token.status,
-      isActive: token.isActive,
-      daysRemaining: token.daysRemaining,
-      usagePercentage: token.usagePercentage,
-      createdAt: token.createdAt
-    }));
-
-    res.json({
-      success: true,
-      tokens: formattedTokens,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit))
-      }
-    });
-
-  } catch (error) {
-    console.error('Get all tokens error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching tokens',
-      error: error.message
-    });
-  }
-};
-
 // Merchant: Get available plans
 export const getAvailablePlans = async (req, res) => {
   try {
-    const result = await SubscriptionService.getAvailablePlans();
+    const plans = await TokenPlan.findActivePlans();
     
-    if (!result.success) {
-      return res.status(400).json(result);
-    }
-
-    res.json(result);
+    res.json({
+      success: true,
+      plans: plans.map(plan => plan.getSummary()),
+      count: plans.length
+    });
 
   } catch (error) {
     console.error('Get available plans error:', error);
@@ -332,16 +468,43 @@ export const getAvailablePlans = async (req, res) => {
   }
 };
 
-// Merchant: Subscribe to a plan
-export const subscribeToPlan = async (req, res) => {
+// Merchant: Get available tokens for subscription
+export const getAvailableTokens = async (req, res) => {
   try {
-    const { planId, businessId } = req.body;
+    const tokens = await Token.find({ 
+      status: 'active', 
+      business: null // Tokens not assigned to any business
+    })
+    .populate('plan')
+    .sort({ price: 1 })
+    .exec();
+
+    res.json({
+      success: true,
+      tokens: tokens.map(token => token.getSummary()),
+      count: tokens.length
+    });
+
+  } catch (error) {
+    console.error('Get available tokens error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching available tokens',
+      error: error.message
+    });
+  }
+};
+
+// Merchant: Subscribe to a token
+export const subscribeToToken = async (req, res) => {
+  try {
+    const { tokenId, businessId } = req.body;
     const userId = req.user.id;
 
-    if (!planId || !businessId) {
+    if (!tokenId || !businessId) {
       return res.status(400).json({
         success: false,
-        message: 'Plan ID and Business ID are required'
+        message: 'Token ID and Business ID are required'
       });
     }
 
@@ -356,25 +519,7 @@ export const subscribeToPlan = async (req, res) => {
       });
     }
 
-    // For now, we'll handle free plans directly
-    // In production, you'd integrate with payment gateway here
-    const plan = await TokenPlan.findById(planId);
-    if (!plan || !plan.isActive || !plan.isPublic) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid or inactive plan'
-      });
-    }
-
-    // Payment integration would go here
-    // For now, we'll proceed with subscription
-    const paymentData = plan.price > 0 ? {
-      reference: `PAY-${businessId}-${Date.now()}`,
-      amount: plan.price,
-      status: 'pending' // In real implementation, this would be 'completed'
-    } : null;
-
-    const result = await SubscriptionService.subscribeToPlan(planId, businessId, paymentData);
+    const result = await SubscriptionService.subscribeToToken(tokenId, businessId, userId);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -383,41 +528,75 @@ export const subscribeToPlan = async (req, res) => {
     res.status(201).json(result);
 
   } catch (error) {
-    console.error('Subscribe to plan error:', error);
+    console.error('Subscribe to token error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while subscribing to plan',
+      message: 'Server error while subscribing to token',
       error: error.message
     });
   }
 };
 
-// Merchant: Get current subscription status
-export const getMySubscription = async (req, res) => {
+// Merchant: Get my active tokens
+export const getMyActiveTokens = async (req, res) => {
   try {
-    const { businessId } = req.params;
+    const userId = req.user.id;
 
-    // Verify business belongs to user
+    // Get businesses owned by user
     const Business = await import('../models/Business.js').then(mod => mod.default);
-    const business = await Business.findOne({ _id: businessId, owner: req.user.id });
-    
-    if (!business) {
-      return res.status(403).json({
-        success: false,
-        message: 'Business not found or you do not have permission'
-      });
-    }
+    const businesses = await Business.find({ owner: userId }).select('_id');
+    const businessIds = businesses.map(b => b._id);
 
-    const result = await SubscriptionService.getMerchantSubscription(businessId);
+    const tokens = await Token.find({ 
+      business: { $in: businessIds },
+      status: 'active'
+    })
+    .populate('plan')
+    .populate('business', 'businessName mpesaShortCode')
+    .sort({ activatedAt: -1 })
+    .exec();
 
-    res.json(result);
+    res.json({
+      success: true,
+      tokens: tokens.map(token => token.getSummary()),
+      count: tokens.length
+    });
 
   } catch (error) {
-    console.error('Get my subscription error:', error);
+    console.error('Get my active tokens error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching subscription',
+      message: 'Server error while fetching active tokens',
       error: error.message
     });
   }
+};
+
+// DEPRECATED - Remove these old functions or keep for backward compatibility
+export const generateTokenForBusiness = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'This endpoint is deprecated. Use POST /admin/tokens instead.'
+  });
+};
+
+export const revokeToken = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'This endpoint is deprecated. Use PUT /admin/tokens/:tokenId/deactivate instead.'
+  });
+};
+
+export const subscribeToPlan = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'This endpoint is deprecated. Use POST /subscribe with tokenId instead.'
+  });
+};
+
+export const getMySubscription = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'This endpoint is deprecated. Use GET /my-tokens instead.'
+  });
 };
