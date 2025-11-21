@@ -180,22 +180,36 @@ tokenSchema.statics = {
 tokenSchema.methods = {
   // Check if token can be used (within limits)
   canUse(amount = 0) {
-    if (!this.isActive) return false;
+    // Check if token is active
+    if (!this.isActive) {
+      return { canUse: false, reason: 'Token is not active' };
+    }
+
+    // Check if token is expired by time
+    if (this.expiryDate <= new Date()) {
+      this.status = 'expired';
+      this.save().catch(console.error);
+      return { canUse: false, reason: 'Token has expired' };
+    }
 
     const plan = this.populated('plan') || this.plan;
     
     // Check transaction limit
     if (plan.transactionLimit > 0 && this.transactionsUsed >= plan.transactionLimit) {
-      return false;
+      this.status = 'expired';
+      this.save().catch(console.error);
+      return { canUse: false, reason: 'Transaction limit reached' };
     }
 
     // Check revenue limit
     const amountInCents = Math.round(amount * 100);
     if (plan.revenueLimit > 0 && (this.revenueUsed + amountInCents) > plan.revenueLimit) {
-      return false;
+      this.status = 'expired';
+      this.save().catch(console.error);
+      return { canUse: false, reason: 'Revenue limit reached' };
     }
 
-    return true;
+    return { canUse: true };
   },
 
   // Get token summary

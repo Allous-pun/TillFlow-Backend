@@ -82,25 +82,58 @@ class TokenService {
   }
 
   // Update token usage after transaction
-  async recordTokenUsage(tokenId, amount) {
+  async recordTokenUsage(tokenId, amount = 0) {
     try {
-      const token = await Token.incrementUsage(tokenId, amount);
+      const token = await Token.findById(tokenId).populate('plan');
       
-      // Check if token should be expired due to limits
-      if (token && !token.canUse(0)) {
-        await Token.findByIdAndUpdate(tokenId, { status: 'expired' });
+      if (!token) {
+        return { success: false, message: 'Token not found' };
+      }
+
+      // Check if token can be used
+      const usageCheckRaw = token.canUse(amount);
+      const usageCheck = (typeof usageCheckRaw === 'object') ? usageCheckRaw : {
+        canUse: !!usageCheckRaw,
+        reason: usageCheckRaw ? null : 'Token usage limits exceeded'
+      };
+
+      if (!usageCheck.canUse) {
+        return { 
+          success: false, 
+          message: usageCheck.reason,
+          token: token.getSummary()
+        };
+      }
+
+      // Increment usage
+      const updatedToken = await Token.incrementUsage(tokenId, amount);
+      
+      // Check if we just reached the limit
+      const plan = updatedToken.plan;
+      let newStatus = 'active';
+      
+      if (plan.transactionLimit > 0 && updatedToken.transactionsUsed >= plan.transactionLimit) {
+        newStatus = 'expired';
+      } else if (plan.revenueLimit > 0 && updatedToken.revenueUsed >= plan.revenueLimit) {
+        newStatus = 'expired';
+      }
+
+      if (newStatus === 'expired') {
+        updatedToken.status = newStatus;
+        await updatedToken.save();
       }
 
       return {
         success: true,
-        token: token
+        token: updatedToken.getSummary(),
+        limitReached: newStatus === 'expired'
       };
 
     } catch (error) {
       console.error('Token usage recording error:', error);
       return {
         success: false,
-        message: error.message
+        message: error.message || 'Error updating token usage'
       };
     }
   }

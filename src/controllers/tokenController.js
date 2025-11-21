@@ -1,4 +1,5 @@
 import TokenPlan from '../models/TokenPlan.js';
+import Token from '../models/Token.js';
 import TokenService from '../services/tokenService.js';
 import SubscriptionService from '../services/subscriptionService.js';
 
@@ -240,6 +241,71 @@ export const getTokenAnalytics = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching token analytics',
+      error: error.message
+    });
+  }
+};
+
+// Admin: Get all tokens across all businesses
+export const getAllTokens = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, status, businessId, planId } = req.query;
+
+    let filter = {};
+    
+    // Apply filters if provided
+    if (status) filter.status = status;
+    if (businessId) filter.business = businessId;
+    if (planId) filter.plan = planId;
+
+    const tokens = await Token.find(filter)
+      .populate('plan')
+      .populate('business', 'businessName mpesaShortCode businessType owner')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit))
+      .exec();
+
+    const total = await Token.countDocuments(filter);
+
+    // Format response
+    const formattedTokens = tokens.map(token => ({
+      id: token._id,
+      tokenValue: token.tokenValue,
+      plan: token.plan ? token.plan.getFullDetails() : null,
+      business: token.business ? {
+        id: token.business._id,
+        businessName: token.business.businessName,
+        mpesaShortCode: token.business.mpesaShortCode,
+        businessType: token.business.businessType
+      } : null,
+      startDate: token.startDate,
+      expiryDate: token.expiryDate,
+      transactionsUsed: token.transactionsUsed,
+      revenueUsed: token.revenueUsed / 100, // Convert back to currency
+      status: token.status,
+      isActive: token.isActive,
+      daysRemaining: token.daysRemaining,
+      usagePercentage: token.usagePercentage,
+      createdAt: token.createdAt
+    }));
+
+    res.json({
+      success: true,
+      tokens: formattedTokens,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+
+  } catch (error) {
+    console.error('Get all tokens error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching tokens',
       error: error.message
     });
   }
