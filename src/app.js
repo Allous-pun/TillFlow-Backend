@@ -7,6 +7,9 @@ import manualTransactionRoutes from "./routes/manualTransactionRoutes.js";
 import businessRoutes from "./routes/businessRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import categoryRuleRoutes from "./routes/categoryRuleRoutes.js";
+import tokenRoutes from './routes/tokenRoutes.js';
+import subscriptionRoutes from './routes/subscriptionRoutes.js';
+
 
 const app = express();
 
@@ -30,6 +33,8 @@ app.use("/api/transactions/manual", manualTransactionRoutes);
 app.use("/api/business", businessRoutes);
 app.use("/api/category", categoryRoutes);
 app.use("/api/category-rule", categoryRuleRoutes);
+app.use("/api/tokens", tokenRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
 
 // Health check route
 app.get("/api/health", (req, res) => {

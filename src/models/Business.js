@@ -124,9 +124,26 @@ businessSchema.virtual('transactionCount', {
   count: true
 });
 
+// Add token relationship virtual
+businessSchema.virtual('activeToken', {
+  ref: 'Token',
+  localField: '_id',
+  foreignField: 'business',
+  justOne: true,
+  match: { status: 'active', expiryDate: { $gt: new Date() } }
+});
+
+// Add subscription relationship virtual
+businessSchema.virtual('subscription', {
+  ref: 'Subscription',
+  localField: '_id',
+  foreignField: 'business',
+  justOne: true
+});
+
 // Indexes for performance
 businessSchema.index({ owner: 1, businessName: 1 });
-businessSchema.index({ mpesaShortCode: 1 }, { unique: true });
+//businessSchema.index({ mpesaShortCode: 1 }, { unique: true });
 businessSchema.index({ isActive: 1 });
 businessSchema.index({ createdAt: -1 });
 
@@ -196,6 +213,18 @@ businessSchema.methods = {
     };
   },
 
+  // Add method to check token status
+  async getTokenStatus() {
+    const Token = mongoose.model('Token');
+    const token = await Token.findActiveByBusiness(this._id);
+    
+    return {
+      hasActiveToken: !!token,
+      currentToken: token ? (typeof token.getSummary === 'function' ? token.getSummary() : token) : null,
+      canMakeTransactions: !!token && !!token.isActive && (typeof token.canUse === 'function' ? token.canUse(0) : true)
+    };
+  },
+
   // Get full business details (including sensitive M-Pesa credentials)
   getFullDetails() {
     return {
@@ -233,6 +262,15 @@ businessSchema.methods = {
     this.updatedAt = new Date();
     return this.save();
   }
+};
+
+// Update getSummary method to include token status (optional helper)
+businessSchema.methods.getSummaryWithToken = async function() {
+  const tokenStatus = await this.getTokenStatus();
+  return {
+    ...this.getSummary(),
+    tokenStatus
+  };
 };
 
 // Pre-save middleware to update timestamps

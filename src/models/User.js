@@ -252,5 +252,23 @@ userSchema.methods = {
   }
 };
 
+// Add subscription relationship virtual
+userSchema.virtual('subscriptions', {
+  ref: 'Subscription',
+  localField: '_id',
+  foreignField: 'user'
+});
+
+// Add method to get user's subscriptions
+userSchema.methods.getSubscriptions = function() {
+  return this.populate({
+    path: 'subscriptions',
+    populate: [
+      { path: 'business', select: 'businessName mpesaShortCode businessType' },
+      { path: 'currentToken', populate: { path: 'plan' } }
+    ]
+  });
+};
+
 const User = mongoose.model("User", userSchema);
 export default User;

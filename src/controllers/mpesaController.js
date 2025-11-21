@@ -2,6 +2,7 @@ import Transaction from "../models/Transaction.js";
 import mpesaService from "../services/mpesaService.js";
 import { MpesaUtils } from "../utils/mpesaUtils.js";
 import eventBus from "../utils/eventBus.js";
+import TokenService from "../services/tokenService.js"; 
 
 // Handle validation webhook from Daraja
 export const handleValidation = async (req, res) => {
@@ -347,11 +348,30 @@ export const handleSTKCallback = async (req, res) => {
   }
 };
 
-// Initiate STK Push (Lipa Na M-Pesa) - UPDATED to use business credentials from DB
+// Initiate STK Push (Lipa Na M-Pesa) - UPDATED with token validation
 export const initiateSTKPush = async (req, res) => {
   try {
     const { phoneNumber, amount, accountReference, description, businessId } = req.body;
     const merchantId = req.user.id;
+
+    // 🆕 TOKEN VALIDATION - Check if user has provided a valid token
+    const tokenValue = req.headers['x-api-token'] || req.headers['authorization']?.replace('Bearer ', '');
+    
+    if (!tokenValue) {
+      return res.status(401).json({
+        success: false,
+        message: 'API token is required for transactions. Please subscribe to a token plan.'
+      });
+    }
+
+    // Validate the token
+    const tokenValidation = await TokenService.validateToken(tokenValue, amount);
+    if (!tokenValidation.isValid) {
+      return res.status(403).json({
+        success: false,
+        message: tokenValidation.message
+      });
+    }
 
     // 🆕 USE MPESAUTILS FOR VALIDATION
     const validation = MpesaUtils.validateSTKParameters(phoneNumber, amount, accountReference);
@@ -388,7 +408,8 @@ export const initiateSTKPush = async (req, res) => {
       billRefNumber: accountReference,
       status: 'pending',
       source: 'mpesa-api',
-      description: description || `STK Push payment for ${accountReference}`
+      description: description || `STK Push payment for ${accountReference}`,
+      tokenUsed: tokenValidation.token._id // 🆕 RECORD WHICH TOKEN WAS USED
     });
 
     await pendingTransaction.save();
@@ -426,6 +447,12 @@ export const initiateSTKPush = async (req, res) => {
       checkoutRequestId: stkResult.checkoutRequestId
     });
 
+    // 🆕 RECORD TOKEN USAGE ASYNCHRONOUSLY (don't block the response)
+    TokenService.recordTokenUsage(tokenValidation.token._id, amount)
+      .catch(error => {
+        console.error('Error recording token usage:', error);
+      });
+
     res.json({
       success: true,
       message: "STK Push initiated successfully",
@@ -436,6 +463,11 @@ export const initiateSTKPush = async (req, res) => {
         id: businessId,
         name: businessCredentials.businessName,
         shortCode: businessCredentials.shortCode
+      },
+      tokenInfo: { // 🆕 RETURN TOKEN INFO FOR TRANSPARENCY
+        tokenId: tokenValidation.token._id,
+        transactionsRemaining: tokenValidation.token.plan.transactionLimit - tokenValidation.token.transactionsUsed,
+        usagePercentage: tokenValidation.token.usagePercentage
       }
     });
 

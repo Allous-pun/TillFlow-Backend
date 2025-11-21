@@ -7,7 +7,7 @@ const transactionSchema = new mongoose.Schema({
     enum: ['mpesa-api', 'manual-pdf', 'manual-csv', 'stk-push'],
     required: true,
     default: 'mpesa-api',
-    index: true
+    //index: true
   },
 
   // Core Transaction Identifiers
@@ -19,7 +19,7 @@ const transactionSchema = new mongoose.Schema({
     },
     unique: true,
     sparse: true, // Allow null for pending transactions
-    index: true,
+    //index: true,
     trim: true
   },
   internalReference: {
@@ -42,7 +42,7 @@ const transactionSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: "Business",
     required: true,
-    index: true
+    //index: true
   },
 
   // Payment Details
@@ -86,11 +86,11 @@ const transactionSchema = new mongoose.Schema({
   transactionTime: {
     type: Date,
     required: true,
-    index: true
+    //index: true
   },
   billRefNumber: {
     type: String,
-    index: true,
+    //index: true,
     trim: true
   },
   invoiceNumber: String,
@@ -100,7 +100,7 @@ const transactionSchema = new mongoose.Schema({
     type: String,
     enum: ['pending', 'completed', 'failed', 'cancelled'],
     default: 'completed',
-    index: true
+    //index: true
   },
 
   // Financial Reconciliation
@@ -152,7 +152,7 @@ transactionSchema.index({ business: 1, createdAt: -1 });
 transactionSchema.index({ 'customer.phoneNumber': 1 });
 transactionSchema.index({ transactionTime: -1 });
 transactionSchema.index({ status: 1, business: 1 });
-transactionSchema.index({ checkoutRequestId: 1 }); // For STK callback lookups
+//transactionSchema.index({ checkoutRequestId: 1 }); // For STK callback lookups
 transactionSchema.index({ source: 1, status: 1 }); // For filtering by source and status
 
 // Static Methods

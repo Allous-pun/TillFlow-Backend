@@ -10,6 +10,7 @@ import {
   initiateSTKPush // ADD THIS IMPORT
 } from "../controllers/mpesaController.js";
 import { protect, merchantOnly } from "../middleware/authMiddleware.js";
+import { validateToken, recordTokenUsage } from '../middleware/tokenMiddleware.js';
 import { MpesaUtils } from "../utils/mpesaUtils.js";
 
 const router = express.Router();
@@ -40,11 +41,11 @@ router.post("/webhook/stk-callback", webhookLimiter, handleSTKCallback);
 
 // ========== PROTECTED ROUTES (Merchant Only) ==========
 // STK Push initiation
-router.post("/stk-push", authLimiter, protect, merchantOnly, initiateSTKPush);
+router.post("/stk-push", authLimiter, protect, merchantOnly, validateToken, recordTokenUsage, initiateSTKPush);
 
-router.post("/transaction/status", authLimiter, protect, merchantOnly, checkTransactionStatus);
-router.get("/transaction/status", authLimiter, protect, merchantOnly, checkTransactionStatus);
-router.get("/transactions", authLimiter, protect, merchantOnly, getMerchantTransactions);
+router.post("/transaction/status", authLimiter, protect, merchantOnly, validateToken, checkTransactionStatus);
+router.get("/transaction/status", authLimiter, protect, merchantOnly, validateToken, checkTransactionStatus);
+router.get("/transactions", authLimiter, protect, merchantOnly, validateToken, getMerchantTransactions);
 router.get("/analytics", authLimiter, protect, merchantOnly, getTransactionAnalytics);
 
 // Health check for M-Pesa routes
