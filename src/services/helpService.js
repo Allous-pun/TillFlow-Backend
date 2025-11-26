@@ -8,57 +8,59 @@ import mongoose from "mongoose";
 
 export class HelpService {
   /**
-   * Create a new help item
-   */
-  static async createHelp(helpData, createdBy) {
-    const {
-      title,
-      description,
-      content,
-      type,
-      category,
-      mediaUrl,
-      fileType,
-      fileSize,
-      duration,
-      keywords,
-      searchTerms,
-      displayOrder
-    } = helpData;
+ * Create a new help item
+ */
+static async createHelp(helpData, createdBy) {
+  const {
+    title,
+    description,
+    content,
+    type,
+    category,
+    mediaUrl,
+    fileType,
+    fileSize,
+    duration,
+    keywords,
+    searchTerms,
+    displayOrder,
+    status // ADD THIS LINE - get status from helpData
+  } = helpData;
 
-    // Check for duplicate title
-    const existingHelp = await Help.findOne({
-      title,
-      status: { $ne: 'archived' }
-    });
+  // Check for duplicate title
+  const existingHelp = await Help.findOne({
+    title,
+    status: { $ne: 'archived' }
+  });
 
-    if (existingHelp) {
-      throw new Error('A help item with this title already exists.');
-    }
-
-    const help = new Help({
-      title: title.trim(),
-      description: description.trim(),
-      content: content.trim(),
-      type,
-      category,
-      mediaUrl,
-      fileType: fileType || 'none',
-      fileSize: fileSize || 0,
-      duration,
-      keywords: keywords || [],
-      searchTerms: searchTerms || [],
-      displayOrder: displayOrder || 0,
-      createdBy,
-      updatedBy: createdBy
-    });
-
-    await help.save();
-    await help.populate('createdBy', 'fullName email');
-    await help.populate('updatedBy', 'fullName email');
-
-    return help;
+  if (existingHelp) {
+    throw new Error('A help item with this title already exists.');
   }
+
+  const help = new Help({
+    title: title.trim(),
+    description: description.trim(),
+    content: content.trim(),
+    type,
+    category,
+    mediaUrl,
+    fileType: fileType || 'none',
+    fileSize: fileSize || 0,
+    duration,
+    keywords: keywords || [],
+    searchTerms: searchTerms || [],
+    displayOrder: displayOrder || 0,
+    status: status || 'draft', // ADD THIS LINE - use status from request or default to draft
+    createdBy,
+    updatedBy: createdBy
+  });
+
+  await help.save();
+  await help.populate('createdBy', 'fullName email');
+  await help.populate('updatedBy', 'fullName email');
+
+  return help;
+}
 
   /**
    * Get help items with filtering and pagination
