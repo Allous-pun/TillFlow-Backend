@@ -11,6 +11,7 @@ import tokenRoutes from './routes/tokenRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import contactRoutes from './routes/contactRoutes.js'; // Fixed: Use import instead of require
+import helpRoutes from './routes/helpRoutes.js';
 
 const app = express();
 
@@ -38,6 +39,7 @@ app.use("/api/tokens", tokenRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/contact", contactRoutes); // Fixed: Use the imported contactRoutes
+app.use("/api/help", helpRoutes);
 
 // Health check route
 app.get("/api/health", (req, res) => {
